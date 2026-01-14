@@ -85,7 +85,7 @@ const isHoliday = (date) => {
 };
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 
-export default function ScheduleManager() {
+function ScheduleManager() {
   const [employees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
   const [weekStart, setWeekStart] = useState(new Date('2025-01-17'));
