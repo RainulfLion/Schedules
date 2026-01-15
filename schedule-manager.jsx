@@ -272,19 +272,44 @@ function ScheduleManager() {
     const hours = getHoursForDay(date);
     const saturday = isSaturday(date);
 
-    // Create manual override
-    const overrideKey = `${draggedEmployee.id}_${dateKey}`;
-    setManualOverrides(prev => ({
-      ...prev,
-      [overrideKey]: {
-        status: 'work',
-        location: location,
-        hours,
-        time: saturday ? '0830-1430' : '0830-1730',
-        manual: true
-      }
-    }));
+    const newOverrides = { ...manualOverrides };
 
+    // Find who was covering this location before
+    const previouslyCovering = employees.filter(emp => {
+      const empSchedule = schedule[emp.id]?.[dateKey];
+      if (!empSchedule || empSchedule.status !== 'work') return false;
+      return empSchedule.location === location;
+    });
+
+    // Clear the dragged employee from any other location on this date
+    employees.forEach(emp => {
+      const overrideKey = `${draggedEmployee.id}_${dateKey}`;
+      if (emp.id === draggedEmployee.id) {
+        // Assign dragged employee to new location
+        newOverrides[overrideKey] = {
+          status: 'work',
+          location: location,
+          hours,
+          time: saturday ? '0830-1430' : '0830-1730',
+          manual: true
+        };
+      }
+    });
+
+    // Set previously covering employees to nowork (they've been replaced)
+    previouslyCovering.forEach(emp => {
+      if (emp.id !== draggedEmployee.id) {
+        const prevOverrideKey = `${emp.id}_${dateKey}`;
+        newOverrides[prevOverrideKey] = {
+          status: 'nowork',
+          location: '',
+          hours: 0,
+          manual: true
+        };
+      }
+    });
+
+    setManualOverrides(newOverrides);
     setDraggedEmployee(null);
   };
 
