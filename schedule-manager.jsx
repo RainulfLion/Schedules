@@ -58,6 +58,18 @@ const defaultRules = [
   { id: 3, name: 'Max Vacation Same Day', value: '2', type: 'number', description: 'Max employees on vacation same day' },
 ];
 
+// User credentials (in production, this would be in a secure database)
+const users = {
+  supervisor: { password: 'super123', role: 'supervisor', name: 'Colin Jorgensen', employeeId: 1 },
+  ken: { password: 'ken123', role: 'guard', name: 'Ken Zieger', employeeId: 2 },
+  harvey: { password: 'harvey123', role: 'guard', name: 'Harvey De Los Reyes', employeeId: 3 },
+  david: { password: 'david123', role: 'guard', name: 'David Dimodica', employeeId: 4 },
+  manuel: { password: 'manuel123', role: 'guard', name: 'Manuel Gonzalez', employeeId: 5 },
+  ernest: { password: 'ernest123', role: 'guard', name: 'Ernest Goodlow', employeeId: 6 },
+  gil: { password: 'gil123', role: 'guard', name: 'Gilberto Romero', employeeId: 7 },
+  kevin: { password: 'kevin123', role: 'guard', name: 'Kevin Valerio', employeeId: 8 },
+};
+
 const getWeekDates = (startDate) => {
   const dates = [];
   const start = new Date(startDate);
@@ -86,6 +98,15 @@ const isHoliday = (date) => {
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 
 function ScheduleManager() {
+  // Authentication state
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem('currentUser');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
   const [employees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
   const [weekStart, setWeekStart] = useState(new Date('2026-01-16'));
@@ -104,10 +125,47 @@ function ScheduleManager() {
   });
   const [calendarMonth, setCalendarMonth] = useState(new Date());
 
-  // Save vacation requests to localStorage whenever they change
+  // Manual schedule overrides (for drag-and-drop)
+  const [manualOverrides, setManualOverrides] = useState(() => {
+    const saved = localStorage.getItem('manualOverrides');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  const [draggedEmployee, setDraggedEmployee] = useState(null);
+
+  // Save to localStorage
   useEffect(() => {
     localStorage.setItem('vacationRequests', JSON.stringify(vacationRequests));
   }, [vacationRequests]);
+
+  useEffect(() => {
+    localStorage.setItem('manualOverrides', JSON.stringify(manualOverrides));
+  }, [manualOverrides]);
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('currentUser');
+    }
+  }, [currentUser]);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const user = users[username.toLowerCase()];
+    if (user && user.password === password) {
+      setCurrentUser({ username, role: user.role, name: user.name, employeeId: user.employeeId });
+      setLoginError('');
+    } else {
+      setLoginError('Invalid username or password');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setUsername('');
+    setPassword('');
+  };
 
   const weekDates = getWeekDates(weekStart);
 
@@ -181,8 +239,54 @@ function ScheduleManager() {
       });
     });
 
+    // Apply manual overrides from drag-and-drop
+    Object.keys(manualOverrides).forEach(key => {
+      const [empIdStr, dateKey] = key.split('_');
+      const empId = parseInt(empIdStr);
+      if (newSchedule[empId]?.[dateKey]) {
+        newSchedule[empId][dateKey] = { ...newSchedule[empId][dateKey], ...manualOverrides[key] };
+      }
+    });
+
     setSchedule(newSchedule);
-  }, [weekStart, vacationRequests]);
+  }, [weekStart, vacationRequests, manualOverrides]);
+
+  // Drag and drop handlers
+  const handleDragStart = (e, employee) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setDraggedEmployee(employee);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    if (currentUser?.role !== 'supervisor') return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e, location, dateKey) => {
+    e.preventDefault();
+    if (!draggedEmployee || currentUser?.role !== 'supervisor') return;
+
+    const date = new Date(dateKey + 'T12:00:00');
+    const hours = getHoursForDay(date);
+    const saturday = isSaturday(date);
+
+    // Create manual override
+    const overrideKey = `${draggedEmployee.id}_${dateKey}`;
+    setManualOverrides(prev => ({
+      ...prev,
+      [overrideKey]: {
+        status: 'work',
+        location: location,
+        hours,
+        time: saturday ? '0830-1430' : '0830-1730',
+        manual: true
+      }
+    }));
+
+    setDraggedEmployee(null);
+  };
 
   const cycleStatus = (empId, dateKey) => {
     const current = schedule[empId]?.[dateKey]?.status || 'work';
@@ -211,8 +315,14 @@ function ScheduleManager() {
   };
 
   const requestVacation = (empId, dateStr) => setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'pending' } } }));
-  const approveVacation = (empId, dateStr) => setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'approved' } } }));
-  const denyVacation = (empId, dateStr) => setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'denied' } } }));
+  const approveVacation = (empId, dateStr) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'approved' } } }));
+  };
+  const denyVacation = (empId, dateStr) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'denied' } } }));
+  };
   const cancelVacation = (empId, dateStr) => {
     setVacationRequests(prev => {
       const n = { ...prev };
@@ -271,6 +381,9 @@ function ScheduleManager() {
   };
 
   const PendingRequests = () => {
+    // Only show for supervisors
+    if (currentUser?.role !== 'supervisor') return null;
+
     const pending = [];
     Object.entries(vacationRequests).forEach(([empId, dates]) => {
       Object.entries(dates).forEach(([dateStr, req]) => {
@@ -406,6 +519,62 @@ function ScheduleManager() {
   
   const getStatusLabel = (s) => ({ work: 'Work', vacation: 'Vacation', holiday: 'Holiday', closed: 'Closed', nowork: 'No Work', oncall: 'On Call' }[s] || s);
 
+  // Login screen
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 w-96">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold text-lg">SM</div>
+            <div>
+              <h1 className="text-2xl font-semibold">Schedule Manager</h1>
+              <p className="text-xs text-zinc-500">Security Guard Scheduler</p>
+            </div>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500"
+                placeholder="Enter username"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500"
+                placeholder="Enter password"
+              />
+            </div>
+            {loginError && <div className="text-red-400 text-sm">{loginError}</div>}
+            <button
+              type="submit"
+              className="w-full px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg text-sm font-medium"
+            >
+              Login
+            </button>
+          </form>
+          <div className="mt-6 p-4 bg-zinc-800/50 rounded-lg text-xs text-zinc-400">
+            <div className="font-medium mb-2">Demo Credentials:</div>
+            <div>Supervisor: <span className="text-emerald-400">supervisor / super123</span></div>
+            <div>Guard: <span className="text-emerald-400">ken / ken123</span></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Filter employees based on role
+  const displayEmployees = currentUser.role === 'supervisor' ? employees : employees.filter(e => e.id === currentUser.employeeId);
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -416,13 +585,16 @@ function ScheduleManager() {
             <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold">SM</div>
             <div>
               <h1 className="text-xl font-semibold">Schedule Manager</h1>
-              <p className="text-xs text-zinc-500">Target: 40 hrs/week</p>
+              <p className="text-xs text-zinc-500">
+                {currentUser.name} • {currentUser.role === 'supervisor' ? '★ Supervisor' : 'Guard'}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm">← Prev</button>
             <div className="px-4 py-2 bg-zinc-800/50 rounded-lg text-sm">{formatDate(weekDates[0])} - {formatDate(weekDates[6])}</div>
             <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm">Next →</button>
+            <button onClick={handleLogout} className="px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm">Logout</button>
           </div>
         </div>
       </header>
@@ -464,10 +636,15 @@ function ScheduleManager() {
                   </tr>
                 </thead>
                 <tbody>
-                  {employees.map(emp => (
+                  {displayEmployees.map(emp => (
                     <tr key={emp.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
                       <td className="p-3 sticky left-0 bg-zinc-950 z-10">
-                        <div className="font-medium flex items-center gap-1">
+                        <div
+                          className={`font-medium flex items-center gap-1 ${currentUser?.role === 'supervisor' ? 'cursor-move' : ''}`}
+                          draggable={currentUser?.role === 'supervisor'}
+                          onDragStart={(e) => handleDragStart(e, emp)}
+                        >
+                          {currentUser?.role === 'supervisor' && <span className="text-zinc-600">⋮⋮</span>}
                           {emp.name}
                           {emp.armed && <span className="text-[10px]">🔫</span>}
                           {emp.role === 'supervisor' && <span className="text-[10px] text-yellow-400">★</span>}
@@ -544,10 +721,16 @@ function ScheduleManager() {
                           else if (rover) { bg = 'bg-cyan-900/30'; txt = 'text-cyan-300'; }
                           
                           return (
-                            <td key={dk} className="p-2">
-                              <div className={`rounded-lg p-2 ${bg}`}>
+                            <td
+                              key={dk}
+                              className="p-2"
+                              onDragOver={handleDragOver}
+                              onDrop={(e) => handleDrop(e, loc.name, dk)}
+                            >
+                              <div className={`rounded-lg p-2 ${bg} ${currentUser?.role === 'supervisor' ? 'border-2 border-dashed border-transparent hover:border-emerald-500' : ''}`}>
                                 {covering.map(e => <div key={e.id} className={`text-xs ${txt}`}>{e.name.split(',')[0]} {e.role === 'rover' && '↔'}</div>)}
                                 {warn && <div className={`text-[10px] font-bold ${txt}`}>{warn}</div>}
+                                {currentUser?.role === 'supervisor' && <div className="text-[10px] text-zinc-600 mt-1">Drop here</div>}
                               </div>
                             </td>
                           );
@@ -565,7 +748,7 @@ function ScheduleManager() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-4">
               <h2 className="text-lg font-medium">Team</h2>
-              {employees.map(emp => {
+              {displayEmployees.map(emp => {
                 const hrs = calculateWeeklyHours(emp.id);
                 const diff = hrs - 40;
                 return (
