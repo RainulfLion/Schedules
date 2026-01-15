@@ -88,7 +88,7 @@ const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8
 function ScheduleManager() {
   const [employees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
-  const [weekStart, setWeekStart] = useState(new Date('2025-01-17'));
+  const [weekStart, setWeekStart] = useState(new Date('2026-01-16'));
   const [schedule, setSchedule] = useState({});
   const [activeTab, setActiveTab] = useState('schedule');
   const [aiLoading, setAiLoading] = useState(false);
