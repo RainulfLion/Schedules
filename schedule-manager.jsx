@@ -95,11 +95,19 @@ function ScheduleManager() {
   const [aiSuggestions, setAiSuggestions] = useState(null);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
-  const [vacationRequests, setVacationRequests] = useState({
-    4: { '2026-01-16': { status: 'approved' }, '2026-01-17': { status: 'approved' } },
-    7: { '2026-01-20': { status: 'approved' }, '2026-01-21': { status: 'approved' }, '2026-01-22': { status: 'approved' } }
+  const [vacationRequests, setVacationRequests] = useState(() => {
+    const saved = localStorage.getItem('vacationRequests');
+    return saved ? JSON.parse(saved) : {
+      4: { '2026-01-16': { status: 'approved' }, '2026-01-17': { status: 'approved' } },
+      7: { '2026-01-20': { status: 'approved' }, '2026-01-21': { status: 'approved' }, '2026-01-22': { status: 'approved' } }
+    };
   });
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+
+  // Save vacation requests to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('vacationRequests', JSON.stringify(vacationRequests));
+  }, [vacationRequests]);
 
   const weekDates = getWeekDates(weekStart);
 
