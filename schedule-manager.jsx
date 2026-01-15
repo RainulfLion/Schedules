@@ -107,27 +107,10 @@ function ScheduleManager() {
   useEffect(() => {
     const newSchedule = {};
     employees.forEach(emp => { newSchedule[emp.id] = {}; });
-    
-    const workingDays = weekDates.filter(d => !isSunday(d) && !isHoliday(d));
+
     const bankGuards = employees.filter(emp => emp.role === 'guard');
     const rover = employees.find(emp => emp.role === 'rover');
-    
-    // Create rotation for days off - each guard gets ~1 day off, Harvey covers
-    const guardRotation = {};
-    let rotationIdx = 0;
-    
-    workingDays.forEach(date => {
-      if (!isSaturday(date)) {
-        const dateKey = formatDateISO(date);
-        const guard = bankGuards[rotationIdx % bankGuards.length];
-        // Skip if guard has approved vacation
-        if (!vacationRequests[guard.id]?.[dateKey]?.status) {
-          guardRotation[dateKey] = guard.id;
-          rotationIdx++;
-        }
-      }
-    });
-    
+
     // Build each day's schedule
     weekDates.forEach(date => {
       const dateKey = formatDateISO(date);
@@ -135,10 +118,36 @@ function ScheduleManager() {
       const sunday = isSunday(date);
       const saturday = isSaturday(date);
       const hours = getHoursForDay(date);
-      
+
+      // First pass: identify who's available and who needs coverage
+      const needsCoverage = [];
+      const availableGuards = [];
+
+      bankGuards.forEach(guard => {
+        const vacReq = vacationRequests[guard.id]?.[dateKey];
+        if (vacReq?.status === 'approved' && guard.defaultLocation) {
+          needsCoverage.push({ guard, reason: 'vacation' });
+        } else if (!sunday && !holiday) {
+          availableGuards.push(guard);
+        }
+      });
+
+      // Limit rotation days off - only give day off if rover can cover
+      let rotationDayOff = null;
+      if (!sunday && !saturday && !holiday && needsCoverage.length === 0 && availableGuards.length > 0) {
+        // Rotate through guards for days off
+        const dayIndex = Math.floor((date.getTime() - new Date('2026-01-01').getTime()) / (1000 * 60 * 60 * 24));
+        rotationDayOff = availableGuards[dayIndex % availableGuards.length];
+        needsCoverage.push({ guard: rotationDayOff, reason: 'rotation' });
+      }
+
+      // Assign rover to first post that needs coverage
+      const coveragePost = needsCoverage.length > 0 ? needsCoverage[0].guard.defaultLocation : null;
+
+      // Now assign everyone
       employees.forEach(emp => {
         const vacReq = vacationRequests[emp.id]?.[dateKey];
-        
+
         if (sunday) {
           newSchedule[emp.id][dateKey] = { status: 'closed', location: '', hours: 0 };
         } else if (holiday) {
@@ -148,31 +157,14 @@ function ScheduleManager() {
         } else if (emp.role === 'supervisor') {
           newSchedule[emp.id][dateKey] = { status: 'work', location: 'Supervisor Post', hours, time: saturday ? '0830-1430' : '0830-1730' };
         } else if (emp.role === 'rover') {
-          // Find post that needs coverage
-          let assignedPost = null;
-          
-          // Check for vacation coverage first
-          for (const guard of bankGuards) {
-            if (vacationRequests[guard.id]?.[dateKey]?.status === 'approved' && guard.defaultLocation) {
-              assignedPost = guard.defaultLocation;
-              break;
-            }
-          }
-          
-          // Then check for rotation day off
-          if (!assignedPost && guardRotation[dateKey]) {
-            const guardOff = bankGuards.find(g => g.id === guardRotation[dateKey]);
-            if (guardOff?.defaultLocation) assignedPost = guardOff.defaultLocation;
-          }
-          
-          if (assignedPost) {
-            newSchedule[emp.id][dateKey] = { status: 'work', location: assignedPost, hours, time: saturday ? '0830-1430' : '0830-1730' };
+          if (coveragePost) {
+            newSchedule[emp.id][dateKey] = { status: 'work', location: coveragePost, hours, time: saturday ? '0830-1430' : '0830-1730' };
           } else {
             newSchedule[emp.id][dateKey] = { status: 'oncall', location: 'On Call', hours: 0 };
           }
         } else {
-          // Regular guard - check if it's their day off
-          if (guardRotation[dateKey] === emp.id) {
+          // Regular guard
+          if (rotationDayOff?.id === emp.id) {
             newSchedule[emp.id][dateKey] = { status: 'nowork', location: '', hours: 0 };
           } else {
             newSchedule[emp.id][dateKey] = { status: 'work', location: emp.defaultLocation, hours, time: saturday ? '0830-1430' : '0830-1730' };
@@ -180,7 +172,7 @@ function ScheduleManager() {
         }
       });
     });
-    
+
     setSchedule(newSchedule);
   }, [weekStart, vacationRequests]);
 
