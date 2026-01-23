@@ -744,12 +744,6 @@ function ScheduleManager() {
               Login
             </button>
           </form>
-          <div className="mt-6 p-4 bg-zinc-800/50 rounded-lg text-xs text-zinc-400">
-            <div className="font-medium mb-2">Login Credentials:</div>
-            <div>Supervisor: <span className="text-emerald-400">jorgensen / colin123</span></div>
-            <div>Guard: <span className="text-emerald-400">zieger / ken123</span></div>
-            <div className="mt-2 text-zinc-500">Use last name as username, firstname123 as password</div>
-          </div>
         </div>
       </div>
     );
