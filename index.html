@@ -17,9 +17,17 @@
 
     <!-- Babel Standalone for JSX transformation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase SDK (compat version for easier integration) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
     <div id="root"></div>
+
+    <!-- Firebase Configuration -->
+    <script src="firebase-config.js"></script>
 
     <!-- Load and render the schedule manager component -->
     <script type="text/babel" src="schedule-manager.jsx"></script>
