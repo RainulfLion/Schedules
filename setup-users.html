@@ -129,35 +129,60 @@
             try {
                 log(`Creating user: ${userData.email}...`, 'info');
 
-                // Create user account
-                const userCredential = await auth.createUserWithEmailAndPassword(userData.email, userData.password);
-                const user = userCredential.user;
+                let userUid;
+                let accountCreated = false;
 
-                log(`✓ Created account for ${userData.email} (UID: ${user.uid})`, 'success');
+                // Try to create user account
+                try {
+                    const userCredential = await auth.createUserWithEmailAndPassword(userData.email, userData.password);
+                    userUid = userCredential.user.uid;
+                    accountCreated = true;
+                    log(`✓ Created account for ${userData.email} (UID: ${userUid})`, 'success');
+                } catch (authError) {
+                    if (authError.code === 'auth/email-already-in-use') {
+                        log(`⚠ User ${userData.email} already exists in Authentication`, 'warning');
 
-                // Save user profile to Firestore
-                await db.collection('users').doc(user.uid).set({
-                    email: userData.email,
-                    role: userData.role,
-                    name: userData.name,
-                    employeeId: userData.employeeId,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
-                log(`✓ Saved profile for ${userData.name}`, 'success');
-
-                // Sign out after creating each user
-                await auth.signOut();
-
-                return { success: true, email: userData.email };
-            } catch (error) {
-                if (error.code === 'auth/email-already-in-use') {
-                    log(`⚠ User ${userData.email} already exists, skipping...`, 'warning');
-                    return { success: true, email: userData.email, skipped: true };
-                } else {
-                    log(`✗ Error creating ${userData.email}: ${error.message}`, 'error');
-                    return { success: false, email: userData.email, error: error.message };
+                        // Sign in to get the UID
+                        try {
+                            const signInResult = await auth.signInWithEmailAndPassword(userData.email, userData.password);
+                            userUid = signInResult.user.uid;
+                            log(`✓ Retrieved UID for existing user: ${userUid}`, 'info');
+                            await auth.signOut();
+                        } catch (signInError) {
+                            log(`✗ Could not sign in to get UID: ${signInError.message}`, 'error');
+                            return { success: false, email: userData.email, error: signInError.message };
+                        }
+                    } else {
+                        throw authError;
+                    }
                 }
+
+                // Check if profile already exists
+                const profileDoc = await db.collection('users').doc(userUid).get();
+
+                if (!profileDoc.exists) {
+                    // Save user profile to Firestore
+                    await db.collection('users').doc(userUid).set({
+                        email: userData.email,
+                        role: userData.role,
+                        name: userData.name,
+                        employeeId: userData.employeeId,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    log(`✓ Created profile for ${userData.name}`, 'success');
+                } else {
+                    log(`✓ Profile already exists for ${userData.name}`, 'info');
+                }
+
+                // Sign out after creating/updating each user
+                if (accountCreated) {
+                    await auth.signOut();
+                }
+
+                return { success: true, email: userData.email, created: accountCreated };
+            } catch (error) {
+                log(`✗ Error processing ${userData.email}: ${error.message}`, 'error');
+                return { success: false, email: userData.email, error: error.message };
             }
         }
 
