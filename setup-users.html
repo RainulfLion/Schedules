@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup Firebase Users - Security Scheduler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-zinc-950 text-zinc-100 p-8" style="font-family: 'JetBrains Mono', monospace;">
+    <div class="max-w-4xl mx-auto">
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-8 mb-6">
+            <h1 class="text-2xl font-bold mb-2">Firebase User Setup</h1>
+            <p class="text-zinc-400 text-sm mb-4">Create initial user accounts for the Security Scheduler</p>
+
+            <div class="mb-6">
+                <button id="createAllUsers" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium">
+                    Create All Users
+                </button>
+                <button id="clearLogs" class="ml-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded-lg font-medium">
+                    Clear Logs
+                </button>
+            </div>
+
+            <div id="progress" class="mb-4 text-sm"></div>
+
+            <div class="bg-zinc-950 rounded-lg p-4 overflow-y-auto max-h-96">
+                <div id="logs" class="text-xs font-mono space-y-1"></div>
+            </div>
+        </div>
+
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+            <h2 class="font-bold mb-4">User Accounts to Create:</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-emerald-400">supervisor@security.com</div>
+                    <div class="text-zinc-500">Password: super123</div>
+                    <div class="text-zinc-600 text-xs">Role: Supervisor (Colin Jorgensen)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">ken@security.com</div>
+                    <div class="text-zinc-500">Password: ken123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (Ken Zieger)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">harvey@security.com</div>
+                    <div class="text-zinc-500">Password: harvey123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (Harvey De Los Reyes)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">david@security.com</div>
+                    <div class="text-zinc-500">Password: david123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (David Dimodica)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">manuel@security.com</div>
+                    <div class="text-zinc-500">Password: manuel123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (Manuel Gonzalez)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">ernest@security.com</div>
+                    <div class="text-zinc-500">Password: ernest123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (Ernest Goodlow)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">gil@security.com</div>
+                    <div class="text-zinc-500">Password: gil123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (Gilberto Romero)</div>
+                </div>
+                <div class="p-3 bg-zinc-800 rounded-lg">
+                    <div class="font-medium text-blue-400">kevin@security.com</div>
+                    <div class="text-zinc-500">Password: kevin123</div>
+                    <div class="text-zinc-600 text-xs">Role: Guard (Kevin Valerio)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- Firebase Config -->
+    <script src="firebase-config.js"></script>
+
+    <script>
+        const users = [
+            { email: 'supervisor@security.com', password: 'super123', role: 'supervisor', name: 'Colin Jorgensen', employeeId: 1 },
+            { email: 'ken@security.com', password: 'ken123', role: 'guard', name: 'Ken Zieger', employeeId: 2 },
+            { email: 'harvey@security.com', password: 'harvey123', role: 'guard', name: 'Harvey De Los Reyes', employeeId: 3 },
+            { email: 'david@security.com', password: 'david123', role: 'guard', name: 'David Dimodica', employeeId: 4 },
+            { email: 'manuel@security.com', password: 'manuel123', role: 'guard', name: 'Manuel Gonzalez', employeeId: 5 },
+            { email: 'ernest@security.com', password: 'ernest123', role: 'guard', name: 'Ernest Goodlow', employeeId: 6 },
+            { email: 'gil@security.com', password: 'gil123', role: 'guard', name: 'Gilberto Romero', employeeId: 7 },
+            { email: 'kevin@security.com', password: 'kevin123', role: 'guard', name: 'Kevin Valerio', employeeId: 8 }
+        ];
+
+        const logsDiv = document.getElementById('logs');
+        const progressDiv = document.getElementById('progress');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const colors = {
+                info: 'text-blue-400',
+                success: 'text-emerald-400',
+                error: 'text-red-400',
+                warning: 'text-amber-400'
+            };
+            logsDiv.innerHTML += `<div class="${colors[type]}">[${timestamp}] ${message}</div>`;
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        async function createUser(userData) {
+            try {
+                log(`Creating user: ${userData.email}...`, 'info');
+
+                // Create user account
+                const userCredential = await auth.createUserWithEmailAndPassword(userData.email, userData.password);
+                const user = userCredential.user;
+
+                log(`✓ Created account for ${userData.email} (UID: ${user.uid})`, 'success');
+
+                // Save user profile to Firestore
+                await db.collection('users').doc(user.uid).set({
+                    email: userData.email,
+                    role: userData.role,
+                    name: userData.name,
+                    employeeId: userData.employeeId,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                log(`✓ Saved profile for ${userData.name}`, 'success');
+
+                // Sign out after creating each user
+                await auth.signOut();
+
+                return { success: true, email: userData.email };
+            } catch (error) {
+                if (error.code === 'auth/email-already-in-use') {
+                    log(`⚠ User ${userData.email} already exists, skipping...`, 'warning');
+                    return { success: true, email: userData.email, skipped: true };
+                } else {
+                    log(`✗ Error creating ${userData.email}: ${error.message}`, 'error');
+                    return { success: false, email: userData.email, error: error.message };
+                }
+            }
+        }
+
+        async function createAllUsers() {
+            const button = document.getElementById('createAllUsers');
+            button.disabled = true;
+            button.textContent = 'Creating Users...';
+
+            log('Starting user creation process...', 'info');
+            progressDiv.innerHTML = '<div class="text-zinc-400">Progress: 0/' + users.length + '</div>';
+
+            let created = 0;
+            let skipped = 0;
+            let failed = 0;
+
+            for (let i = 0; i < users.length; i++) {
+                const result = await createUser(users[i]);
+                if (result.success) {
+                    if (result.skipped) {
+                        skipped++;
+                    } else {
+                        created++;
+                    }
+                } else {
+                    failed++;
+                }
+                progressDiv.innerHTML = `<div class="text-zinc-400">Progress: ${i + 1}/${users.length}</div>`;
+
+                // Small delay between creations
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            log('', 'info');
+            log('='.repeat(50), 'info');
+            log(`User creation complete!`, 'success');
+            log(`Created: ${created} | Skipped: ${skipped} | Failed: ${failed}`, 'info');
+            log('='.repeat(50), 'info');
+
+            button.disabled = false;
+            button.textContent = 'Create All Users';
+            progressDiv.innerHTML = `<div class="text-emerald-400">✓ Complete! Created: ${created}, Skipped: ${skipped}, Failed: ${failed}</div>`;
+        }
+
+        document.getElementById('createAllUsers').addEventListener('click', createAllUsers);
+        document.getElementById('clearLogs').addEventListener('click', () => {
+            logsDiv.innerHTML = '';
+            progressDiv.innerHTML = '';
+        });
+
+        log('Ready to create users. Click "Create All Users" to begin.', 'info');
+    </script>
+</body>
+</html>

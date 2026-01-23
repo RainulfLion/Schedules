@@ -58,16 +58,16 @@ const defaultRules = [
   { id: 3, name: 'Max Vacation Same Day', value: '2', type: 'number', description: 'Max employees on vacation same day' },
 ];
 
-// User credentials (in production, this would be in a secure database)
-const users = {
-  supervisor: { password: 'super123', role: 'supervisor', name: 'Colin Jorgensen', employeeId: 1 },
-  ken: { password: 'ken123', role: 'guard', name: 'Ken Zieger', employeeId: 2 },
-  harvey: { password: 'harvey123', role: 'guard', name: 'Harvey De Los Reyes', employeeId: 3 },
-  david: { password: 'david123', role: 'guard', name: 'David Dimodica', employeeId: 4 },
-  manuel: { password: 'manuel123', role: 'guard', name: 'Manuel Gonzalez', employeeId: 5 },
-  ernest: { password: 'ernest123', role: 'guard', name: 'Ernest Goodlow', employeeId: 6 },
-  gil: { password: 'gil123', role: 'guard', name: 'Gilberto Romero', employeeId: 7 },
-  kevin: { password: 'kevin123', role: 'guard', name: 'Kevin Valerio', employeeId: 8 },
+// User email mapping for easy login (username to email)
+const userEmailMap = {
+  supervisor: 'supervisor@security.com',
+  ken: 'ken@security.com',
+  harvey: 'harvey@security.com',
+  david: 'david@security.com',
+  manuel: 'manuel@security.com',
+  ernest: 'ernest@security.com',
+  gil: 'gil@security.com',
+  kevin: 'kevin@security.com'
 };
 
 const getWeekDates = (startDate) => {
@@ -99,13 +99,11 @@ const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8
 
 function ScheduleManager() {
   // Authentication state
-  const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('currentUser');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [currentUser, setCurrentUser] = useState(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [authLoading, setAuthLoading] = useState(true);
 
   const [employees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
@@ -116,55 +114,114 @@ function ScheduleManager() {
   const [aiSuggestions, setAiSuggestions] = useState(null);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
-  const [vacationRequests, setVacationRequests] = useState(() => {
-    const saved = localStorage.getItem('vacationRequests');
-    return saved ? JSON.parse(saved) : {
-      4: { '2026-01-16': { status: 'approved' }, '2026-01-17': { status: 'approved' } },
-      7: { '2026-01-20': { status: 'approved' }, '2026-01-21': { status: 'approved' }, '2026-01-22': { status: 'approved' } }
-    };
-  });
+  const [vacationRequests, setVacationRequests] = useState({});
   const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   // Manual schedule overrides (for drag-and-drop)
-  const [manualOverrides, setManualOverrides] = useState(() => {
-    const saved = localStorage.getItem('manualOverrides');
-    return saved ? JSON.parse(saved) : {};
-  });
+  const [manualOverrides, setManualOverrides] = useState({});
 
   const [draggedEmployee, setDraggedEmployee] = useState(null);
 
-  // Save to localStorage
+  // Firebase Authentication listener
   useEffect(() => {
-    localStorage.setItem('vacationRequests', JSON.stringify(vacationRequests));
-  }, [vacationRequests]);
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        // User is signed in, fetch their profile
+        const profile = await FirebaseHelpers.getUserProfile(user.uid);
+        if (profile) {
+          setCurrentUser({
+            uid: user.uid,
+            email: user.email,
+            role: profile.role,
+            name: profile.name,
+            employeeId: profile.employeeId
+          });
+        }
+      } else {
+        // User is signed out
+        setCurrentUser(null);
+      }
+      setAuthLoading(false);
+    });
 
-  useEffect(() => {
-    localStorage.setItem('manualOverrides', JSON.stringify(manualOverrides));
-  }, [manualOverrides]);
+    return () => unsubscribe();
+  }, []);
 
+  // Load vacation requests from Firestore
   useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('currentUser');
-    }
+    if (!currentUser) return;
+
+    const unsubscribe = FirebaseHelpers.onVacationRequestsChange((requests) => {
+      setVacationRequests(requests);
+    });
+
+    return () => unsubscribe();
   }, [currentUser]);
 
-  const handleLogin = (e) => {
+  // Load manual overrides from Firestore
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const unsubscribe = FirebaseHelpers.onManualOverridesChange((overrides) => {
+      setManualOverrides(overrides);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  // Save vacation requests to Firestore
+  useEffect(() => {
+    if (!currentUser || Object.keys(vacationRequests).length === 0) return;
+
+    const timeoutId = setTimeout(() => {
+      FirebaseHelpers.saveVacationRequests(vacationRequests);
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [vacationRequests, currentUser]);
+
+  // Save manual overrides to Firestore
+  useEffect(() => {
+    if (!currentUser || Object.keys(manualOverrides).length === 0) return;
+
+    const timeoutId = setTimeout(() => {
+      FirebaseHelpers.saveManualOverrides(manualOverrides);
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [manualOverrides, currentUser]);
+
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const user = users[username.toLowerCase()];
-    if (user && user.password === password) {
-      setCurrentUser({ username, role: user.role, name: user.name, employeeId: user.employeeId });
-      setLoginError('');
-    } else {
-      setLoginError('Invalid username or password');
+    setLoginError('');
+
+    try {
+      // Convert username to email if needed
+      const email = userEmailMap[username.toLowerCase()] || username;
+
+      // Sign in with Firebase
+      await auth.signInWithEmailAndPassword(email, password);
+      // User state will be updated by onAuthStateChanged listener
+    } catch (error) {
+      console.error('Login error:', error);
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        setLoginError('Invalid username or password');
+      } else if (error.code === 'auth/too-many-requests') {
+        setLoginError('Too many failed attempts. Please try again later.');
+      } else {
+        setLoginError('Login failed. Please try again.');
+      }
     }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setUsername('');
-    setPassword('');
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      setUsername('');
+      setPassword('');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   const weekDates = getWeekDates(weekStart);
@@ -544,6 +601,19 @@ function ScheduleManager() {
   
   const getStatusLabel = (s) => ({ work: 'Work', vacation: 'Vacation', holiday: 'Holiday', closed: 'Closed', nowork: 'No Work', oncall: 'On Call' }[s] || s);
 
+  // Show loading state while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-zinc-500">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   // Login screen
   if (!currentUser) {
     return (
@@ -588,9 +658,10 @@ function ScheduleManager() {
             </button>
           </form>
           <div className="mt-6 p-4 bg-zinc-800/50 rounded-lg text-xs text-zinc-400">
-            <div className="font-medium mb-2">Demo Credentials:</div>
+            <div className="font-medium mb-2">Login Credentials:</div>
             <div>Supervisor: <span className="text-emerald-400">supervisor / super123</span></div>
             <div>Guard: <span className="text-emerald-400">ken / ken123</span></div>
+            <div className="mt-2 text-zinc-500">Or use: <span className="text-emerald-400">name@security.com</span></div>
           </div>
         </div>
       </div>

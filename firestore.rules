@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user is a supervisor
+    function isSupervisor() {
+      return isSignedIn() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'supervisor';
+    }
+
+    // Helper function to check if user owns this resource
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // User profiles - users can read their own, supervisors can read all
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSupervisor() || isOwner(userId);
+    }
+
+    // Vacation requests - guards can read/write their own, supervisors can read/write all
+    match /vacationRequests/{employeeId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isSupervisor();
+    }
+
+    // Manual overrides - only supervisors can modify
+    match /settings/manualOverrides {
+      allow read: if isSignedIn();
+      allow write: if isSupervisor();
+    }
+
+    // General settings - supervisors only
+    match /settings/{document} {
+      allow read: if isSignedIn();
+      allow write: if isSupervisor();
+    }
+
+    // Schedules - all authenticated users can read, supervisors can write
+    match /schedules/{scheduleId} {
+      allow read: if isSignedIn();
+      allow write: if isSupervisor();
+    }
+  }
+}
