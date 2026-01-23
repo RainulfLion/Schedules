@@ -71,10 +71,28 @@ const FirebaseHelpers = {
   // Save vacation requests
   async saveVacationRequests(requests) {
     const batch = db.batch();
+
+    // Get all existing documents to know which ones to delete
+    const snapshot = await db.collection('vacationRequests').get();
+    const existingIds = new Set();
+    snapshot.forEach(doc => existingIds.add(doc.id));
+
+    // Update or create documents for current requests
     Object.entries(requests).forEach(([empId, dates]) => {
       const ref = db.collection('vacationRequests').doc(empId);
-      batch.set(ref, dates);
+      if (dates && Object.keys(dates).length > 0) {
+        batch.set(ref, dates);
+        existingIds.delete(empId);
+      }
     });
+
+    // Delete documents that are no longer in requests
+    existingIds.forEach(empId => {
+      if (!requests[empId] || Object.keys(requests[empId]).length === 0) {
+        batch.delete(db.collection('vacationRequests').doc(empId));
+      }
+    });
+
     await batch.commit();
   },
 
@@ -86,25 +104,42 @@ const FirebaseHelpers = {
 
   // Save manual overrides
   async saveManualOverrides(overrides) {
-    await db.collection('settings').doc('manualOverrides').set({ overrides });
+    await db.collection('settings').doc('manualOverrides').set({
+      overrides,
+      lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+    });
   },
 
   // Listen to vacation requests changes
   onVacationRequestsChange(callback) {
-    return db.collection('vacationRequests').onSnapshot(snapshot => {
-      const requests = {};
-      snapshot.forEach(doc => {
-        requests[doc.id] = doc.data();
-      });
-      callback(requests);
-    });
+    return db.collection('vacationRequests').onSnapshot(
+      snapshot => {
+        const requests = {};
+        snapshot.forEach(doc => {
+          requests[doc.id] = doc.data();
+        });
+        callback(requests);
+      },
+      error => {
+        console.error('Error listening to vacation requests:', error);
+        // Still call callback with empty object on error to prevent app from breaking
+        callback({});
+      }
+    );
   },
 
   // Listen to manual overrides changes
   onManualOverridesChange(callback) {
-    return db.collection('settings').doc('manualOverrides').onSnapshot(doc => {
-      callback(doc.exists ? doc.data().overrides || {} : {});
-    });
+    return db.collection('settings').doc('manualOverrides').onSnapshot(
+      doc => {
+        callback(doc.exists ? doc.data().overrides || {} : {});
+      },
+      error => {
+        console.error('Error listening to manual overrides:', error);
+        // Still call callback with empty object on error to prevent app from breaking
+        callback({});
+      }
+    );
   }
 };
 

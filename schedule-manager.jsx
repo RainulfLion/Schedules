@@ -122,6 +122,12 @@ function ScheduleManager() {
 
   const [draggedEmployee, setDraggedEmployee] = useState(null);
 
+  // Track if data is being loaded from Firestore to avoid re-saving
+  const isLoadingVacationRequests = React.useRef(false);
+  const isLoadingManualOverrides = React.useRef(false);
+  const hasInitializedVacations = React.useRef(false);
+  const hasInitializedOverrides = React.useRef(false);
+
   // Firebase Authentication listener
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
@@ -147,45 +153,67 @@ function ScheduleManager() {
     return () => unsubscribe();
   }, []);
 
-  // Load vacation requests from Firestore
+  // Load vacation requests from Firestore with real-time sync
   useEffect(() => {
     if (!currentUser) return;
 
     const unsubscribe = FirebaseHelpers.onVacationRequestsChange((requests) => {
+      isLoadingVacationRequests.current = true;
       setVacationRequests(requests);
+      hasInitializedVacations.current = true;
+      // Reset the flag after state update
+      setTimeout(() => {
+        isLoadingVacationRequests.current = false;
+      }, 100);
     });
 
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Load manual overrides from Firestore
+  // Load manual overrides from Firestore with real-time sync
   useEffect(() => {
     if (!currentUser) return;
 
     const unsubscribe = FirebaseHelpers.onManualOverridesChange((overrides) => {
+      isLoadingManualOverrides.current = true;
       setManualOverrides(overrides);
+      hasInitializedOverrides.current = true;
+      // Reset the flag after state update
+      setTimeout(() => {
+        isLoadingManualOverrides.current = false;
+      }, 100);
     });
 
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Save vacation requests to Firestore
+  // Save vacation requests to Firestore (only when locally modified)
   useEffect(() => {
-    if (!currentUser || Object.keys(vacationRequests).length === 0) return;
+    if (!currentUser) return;
+    if (!hasInitializedVacations.current) return;
+    if (isLoadingVacationRequests.current) return;
 
     const timeoutId = setTimeout(() => {
-      FirebaseHelpers.saveVacationRequests(vacationRequests);
+      FirebaseHelpers.saveVacationRequests(vacationRequests)
+        .catch(error => {
+          console.error('Error saving vacation requests:', error);
+        });
     }, 500);
 
     return () => clearTimeout(timeoutId);
   }, [vacationRequests, currentUser]);
 
-  // Save manual overrides to Firestore
+  // Save manual overrides to Firestore (only when locally modified)
   useEffect(() => {
-    if (!currentUser || Object.keys(manualOverrides).length === 0) return;
+    if (!currentUser) return;
+    if (!hasInitializedOverrides.current) return;
+    if (isLoadingManualOverrides.current) return;
 
     const timeoutId = setTimeout(() => {
-      FirebaseHelpers.saveManualOverrides(manualOverrides);
+      FirebaseHelpers.saveManualOverrides(manualOverrides)
+        .catch(error => {
+          console.error('Error saving manual overrides:', error);
+        });
     }, 500);
 
     return () => clearTimeout(timeoutId);
