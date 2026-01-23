@@ -757,37 +757,42 @@ function ScheduleManager() {
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
       
       <header className="border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold">SM</div>
-            <div>
-              <h1 className="text-xl font-semibold">Schedule Manager</h1>
-              <p className="text-xs text-zinc-500">
-                {currentUser.name} • {currentUser.role === 'supervisor' ? '★ Supervisor' : 'Guard'}
-              </p>
+        <div className="max-w-7xl mx-auto px-3 md:px-4 py-3 md:py-4">
+          <div className="flex items-center justify-between mb-3 md:mb-0">
+            <div className="flex items-center gap-2 md:gap-4">
+              <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold flex-shrink-0">SM</div>
+              <div>
+                <h1 className="text-lg md:text-xl font-semibold">Schedule Manager</h1>
+                <p className="text-xs text-zinc-500">
+                  {currentUser.name} • {currentUser.role === 'supervisor' ? '★ Supervisor' : 'Guard'}
+                </p>
+              </div>
             </div>
+            <button onClick={handleLogout} className="px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm md:hidden">Logout</button>
           </div>
-          <div className="flex items-center gap-3">
-            <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm">← Prev</button>
-            <div className="px-4 py-2 bg-zinc-800/50 rounded-lg text-sm">{formatDate(weekDates[0])} - {formatDate(weekDates[6])}</div>
-            <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm">Next →</button>
-            <button onClick={handleLogout} className="px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm">Logout</button>
+          <div className="flex items-center justify-between gap-2 md:gap-3">
+            <div className="flex items-center gap-2 flex-1 md:flex-none">
+              <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm min-h-[44px]">← Prev</button>
+              <div className="px-2 md:px-4 py-2 bg-zinc-800/50 rounded-lg text-xs md:text-sm min-h-[44px] flex items-center">{formatDate(weekDates[0])} - {formatDate(weekDates[6])}</div>
+              <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm min-h-[44px]">Next →</button>
+            </div>
+            <button onClick={handleLogout} className="hidden md:block px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm min-h-[44px]">Logout</button>
           </div>
         </div>
       </header>
 
-      <div className="border-b border-zinc-800 bg-zinc-900/30">
-        <div className="max-w-7xl mx-auto px-4 flex gap-1">
+      <div className="border-b border-zinc-800 bg-zinc-900/30 overflow-x-auto">
+        <div className="max-w-7xl mx-auto px-3 md:px-4 flex gap-1 min-w-max md:min-w-0">
           {['schedule', 'employees', 'rules', 'holidays'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-5 py-3 text-sm font-medium capitalize ${activeTab === tab ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}>{tab}</button>
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 md:px-5 py-3 text-sm font-medium capitalize whitespace-nowrap min-h-[44px] ${activeTab === tab ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}>{tab}</button>
           ))}
-          <div className="flex-1" />
-          <button onClick={generateImage} className="my-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm mr-2">📷 Export</button>
-          <button onClick={runAi} disabled={aiLoading} className="my-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg text-sm disabled:opacity-50">{aiLoading ? '...' : '⚡ AI'}</button>
+          <div className="flex-1 hidden md:block" />
+          <button onClick={generateImage} className="my-1.5 px-3 md:px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-xs md:text-sm mr-2 min-h-[44px] whitespace-nowrap">📷 Export</button>
+          <button onClick={runAi} disabled={aiLoading} className="my-1.5 px-3 md:px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg text-xs md:text-sm disabled:opacity-50 min-h-[44px] whitespace-nowrap">{aiLoading ? '...' : '⚡ AI'}</button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-3 md:px-4 py-4 md:py-6">
         {activeTab === 'schedule' && (
           <div className="space-y-4">
             <PendingRequests />
