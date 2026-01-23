@@ -81,8 +81,22 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-    <!-- Firebase Config -->
-    <script src="firebase-config.js"></script>
+    <script>
+        // Initialize Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyB-X1UIxnANq9nO_1_5-ip6DN581W30H4w",
+            authDomain: "security-755b3.firebaseapp.com",
+            projectId: "security-755b3",
+            storageBucket: "security-755b3.firebasestorage.app",
+            messagingSenderId: "644894280494",
+            appId: "1:644894280494:web:38b4bf2fae49d8d2f6c8bf",
+            measurementId: "G-XG1YYE8MCH"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+    </script>
 
     <script>
         const users = [
