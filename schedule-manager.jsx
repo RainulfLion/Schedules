@@ -58,16 +58,16 @@ const defaultRules = [
   { id: 3, name: 'Max Vacation Same Day', value: '2', type: 'number', description: 'Max employees on vacation same day' },
 ];
 
-// User email mapping for easy login (username to email)
+// User email mapping for easy login (last name to email)
 const userEmailMap = {
-  supervisor: 'supervisor@security.com',
-  ken: 'ken@security.com',
-  harvey: 'harvey@security.com',
-  david: 'david@security.com',
-  manuel: 'manuel@security.com',
-  ernest: 'ernest@security.com',
-  gil: 'gil@security.com',
-  kevin: 'kevin@security.com'
+  jorgensen: 'jorgensen@security.com',
+  zieger: 'zieger@security.com',
+  delosreyes: 'delosreyes@security.com',
+  dimodica: 'dimodica@security.com',
+  gonzalez: 'gonzalez@security.com',
+  goodlow: 'goodlow@security.com',
+  romero: 'romero@security.com',
+  valerio: 'valerio@security.com'
 };
 
 const getWeekDates = (startDate) => {
@@ -121,6 +121,10 @@ function ScheduleManager() {
   const [manualOverrides, setManualOverrides] = useState({});
 
   const [draggedEmployee, setDraggedEmployee] = useState(null);
+
+  // Employee editing state
+  const [editingEmployee, setEditingEmployee] = useState(null);
+  const [editedEmployeeData, setEditedEmployeeData] = useState({});
 
   // Track if data is being loaded from Firestore to avoid re-saving
   const isLoadingVacationRequests = React.useRef(false);
@@ -441,6 +445,61 @@ function ScheduleManager() {
     });
   };
 
+  // Employee profile editing
+  const startEditingEmployee = (emp) => {
+    setEditingEmployee(emp.id);
+    setEditedEmployeeData({
+      name: emp.name,
+      phone: emp.phone,
+      defaultLocation: emp.defaultLocation || '',
+      armed: emp.armed || false
+    });
+  };
+
+  const saveEmployeeChanges = async () => {
+    if (!editingEmployee) return;
+
+    // Update local employees state
+    const updatedEmployees = initialEmployees.map(emp =>
+      emp.id === editingEmployee
+        ? { ...emp, ...editedEmployeeData }
+        : emp
+    );
+
+    // Update Firestore - find the user document by employeeId
+    try {
+      // Get the user's UID from Firestore by employeeId
+      const usersSnapshot = await db.collection('users')
+        .where('employeeId', '==', editingEmployee)
+        .get();
+
+      if (!usersSnapshot.empty) {
+        const userDoc = usersSnapshot.docs[0];
+        await db.collection('users').doc(userDoc.id).update({
+          name: editedEmployeeData.name,
+          phone: editedEmployeeData.phone,
+          defaultLocation: editedEmployeeData.defaultLocation,
+          armed: editedEmployeeData.armed
+        });
+      }
+
+      // Also update the initialEmployees in the component (note: this won't persist on refresh)
+      // To make it persist, we'd need to store employees in Firestore too
+      Object.assign(initialEmployees.find(e => e.id === editingEmployee), editedEmployeeData);
+
+      setEditingEmployee(null);
+      setEditedEmployeeData({});
+    } catch (error) {
+      console.error('Error saving employee changes:', error);
+      alert('Failed to save changes. Please try again.');
+    }
+  };
+
+  const cancelEditingEmployee = () => {
+    setEditingEmployee(null);
+    setEditedEmployeeData({});
+  };
+
   const VacationCalendar = ({ employeeId }) => {
     const year = calendarMonth.getFullYear(), month = calendarMonth.getMonth();
     const firstDay = new Date(year, month, 1);
@@ -687,9 +746,9 @@ function ScheduleManager() {
           </form>
           <div className="mt-6 p-4 bg-zinc-800/50 rounded-lg text-xs text-zinc-400">
             <div className="font-medium mb-2">Login Credentials:</div>
-            <div>Supervisor: <span className="text-emerald-400">supervisor / super123</span></div>
-            <div>Guard: <span className="text-emerald-400">ken / ken123</span></div>
-            <div className="mt-2 text-zinc-500">Or use: <span className="text-emerald-400">name@security.com</span></div>
+            <div>Supervisor: <span className="text-emerald-400">jorgensen / colin123</span></div>
+            <div>Guard: <span className="text-emerald-400">zieger / ken123</span></div>
+            <div className="mt-2 text-zinc-500">Use last name as username, firstname123 as password</div>
           </div>
         </div>
       </div>
@@ -875,19 +934,87 @@ function ScheduleManager() {
               {displayEmployees.map(emp => {
                 const hrs = calculateWeeklyHours(emp.id);
                 const diff = hrs - 40;
+                const isEditing = editingEmployee === emp.id;
+                const canEdit = currentUser.role === 'supervisor' || currentUser.employeeId === emp.id;
+
                 return (
-                  <div key={emp.id} onClick={() => setSelectedEmployee(emp.id)} className={`p-4 bg-zinc-900/50 rounded-xl border cursor-pointer ${selectedEmployee === emp.id ? 'border-emerald-500' : 'border-zinc-800 hover:border-zinc-700'}`}>
-                    <div className="flex justify-between">
-                      <div>
-                        <div className="font-medium">{emp.name} {emp.armed && '🔫'} {emp.role === 'supervisor' && '★'} {emp.role === 'rover' && '↔'}</div>
-                        <div className="text-xs text-zinc-500 mt-1">{emp.phone}</div>
-                        <div className="text-xs text-zinc-600 mt-2">{emp.defaultLocation || 'Rover'}</div>
+                  <div key={emp.id} className={`p-4 bg-zinc-900/50 rounded-xl border ${selectedEmployee === emp.id ? 'border-emerald-500' : 'border-zinc-800 hover:border-zinc-700'}`}>
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex-1" onClick={() => !isEditing && setSelectedEmployee(emp.id)} style={{ cursor: !isEditing ? 'pointer' : 'default' }}>
+                        {isEditing ? (
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editedEmployeeData.name}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, name: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                              placeholder="Full Name"
+                            />
+                            <input
+                              type="text"
+                              value={editedEmployeeData.phone}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, phone: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                              placeholder="Phone Number"
+                            />
+                            <input
+                              type="text"
+                              value={editedEmployeeData.defaultLocation}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, defaultLocation: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                              placeholder="Default Location"
+                            />
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={editedEmployeeData.armed}
+                                onChange={(e) => setEditedEmployeeData({...editedEmployeeData, armed: e.target.checked})}
+                                className="rounded"
+                              />
+                              Armed
+                            </label>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="font-medium">{emp.name} {emp.armed && '🔫'} {emp.role === 'supervisor' && '★'} {emp.role === 'rover' && '↔'}</div>
+                            <div className="text-xs text-zinc-500 mt-1">{emp.phone}</div>
+                            <div className="text-xs text-zinc-600 mt-2">{emp.defaultLocation || 'Rover'}</div>
+                          </>
+                        )}
                       </div>
-                      <div className="text-right">
+                      <div className="text-right ml-4">
                         <div className={`text-2xl font-bold ${Math.abs(diff) <= 2 ? 'text-emerald-400' : diff > 0 ? 'text-amber-400' : 'text-blue-400'}`}>{hrs.toFixed(1)}</div>
                         <div className="text-xs text-zinc-500">({diff >= 0 ? '+' : ''}{diff.toFixed(1)})</div>
                       </div>
                     </div>
+
+                    {canEdit && (
+                      <div className="flex gap-2 mt-3">
+                        {isEditing ? (
+                          <>
+                            <button
+                              onClick={saveEmployeeChanges}
+                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-xs"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={cancelEditingEmployee}
+                              className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded text-xs"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => startEditingEmployee(emp)}
+                            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs"
+                          >
+                            Edit Profile
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
