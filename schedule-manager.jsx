@@ -85,6 +85,16 @@ const getWeekDates = (startDate) => {
   return dates;
 };
 
+// Get the Friday of the current week
+const getCurrentWeekFriday = () => {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const dayOfWeek = today.getDay();
+  const friday = new Date(today);
+  friday.setDate(today.getDate() - ((dayOfWeek + 2) % 7));
+  return friday;
+};
+
 const formatDate = (date) => date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
 const formatDateISO = (date) => date.toISOString().split('T')[0];
 const getDayName = (date) => date.toLocaleDateString('en-US', { weekday: 'short' });
@@ -107,7 +117,7 @@ function ScheduleManager() {
 
   const [employees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
-  const [weekStart, setWeekStart] = useState(new Date('2026-01-16'));
+  const [weekStart, setWeekStart] = useState(getCurrentWeekFriday());
   const [schedule, setSchedule] = useState({});
   const [activeTab, setActiveTab] = useState('schedule');
   const [aiLoading, setAiLoading] = useState(false);
@@ -408,12 +418,32 @@ function ScheduleManager() {
     const idx = STATUS_OPTIONS.indexOf(current);
     let nextStatus = STATUS_OPTIONS[(idx + 1) % STATUS_OPTIONS.length];
     if (nextStatus === 'closed') nextStatus = 'work';
-    
+
     const date = new Date(dateKey + 'T12:00:00');
     const hours = nextStatus === 'work' ? getHoursForDay(date) : 0;
+    const saturday = isSaturday(date);
+    const currentSchedule = schedule[empId]?.[dateKey] || {};
+
+    // Create the updated schedule entry
+    const updatedEntry = {
+      status: nextStatus,
+      hours,
+      location: nextStatus === 'work' ? currentSchedule.location || '' : '',
+      time: nextStatus === 'work' ? (currentSchedule.time || (saturday ? '0830-1430' : '0830-1730')) : '',
+      manual: true
+    };
+
+    // Update local schedule state for immediate UI update
     setSchedule(prev => ({
       ...prev,
-      [empId]: { ...prev[empId], [dateKey]: { ...prev[empId]?.[dateKey], status: nextStatus, hours } }
+      [empId]: { ...prev[empId], [dateKey]: updatedEntry }
+    }));
+
+    // Save to manual overrides (which syncs to Firestore)
+    const overrideKey = `${empId}_${dateKey}`;
+    setManualOverrides(prev => ({
+      ...prev,
+      [overrideKey]: updatedEntry
     }));
   };
 
