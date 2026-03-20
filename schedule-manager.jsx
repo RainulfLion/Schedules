@@ -482,7 +482,11 @@ function ScheduleManager() {
       name: emp.name,
       phone: emp.phone,
       defaultLocation: emp.defaultLocation || '',
-      armed: emp.armed || false
+      armed: emp.armed || false,
+      guardCardExpiration: emp.guardCardExpiration || '',
+      cprCardExpiration: emp.cprCardExpiration || '',
+      shirtSize: emp.shirtSize || '',
+      pantsSize: emp.pantsSize || ''
     });
   };
 
@@ -509,7 +513,11 @@ function ScheduleManager() {
           name: editedEmployeeData.name,
           phone: editedEmployeeData.phone,
           defaultLocation: editedEmployeeData.defaultLocation,
-          armed: editedEmployeeData.armed
+          armed: editedEmployeeData.armed,
+          guardCardExpiration: editedEmployeeData.guardCardExpiration,
+          cprCardExpiration: editedEmployeeData.cprCardExpiration,
+          shirtSize: editedEmployeeData.shirtSize,
+          pantsSize: editedEmployeeData.pantsSize
         });
       }
 
@@ -1002,12 +1010,72 @@ function ScheduleManager() {
                               />
                               Armed
                             </label>
+                            <input
+                              type="date"
+                              value={editedEmployeeData.guardCardExpiration}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, guardCardExpiration: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                              placeholder="Guard Card Expiration"
+                            />
+                            <label className="text-xs text-zinc-400">Guard Card Expiration</label>
+                            <input
+                              type="date"
+                              value={editedEmployeeData.cprCardExpiration}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, cprCardExpiration: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                              placeholder="CPR Card Expiration"
+                            />
+                            <label className="text-xs text-zinc-400">CPR Card Expiration</label>
+                            <select
+                              value={editedEmployeeData.shirtSize}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, shirtSize: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                            >
+                              <option value="">Shirt Size</option>
+                              <option value="XS">XS</option>
+                              <option value="S">S</option>
+                              <option value="M">M</option>
+                              <option value="L">L</option>
+                              <option value="XL">XL</option>
+                              <option value="2XL">2XL</option>
+                              <option value="3XL">3XL</option>
+                            </select>
+                            <select
+                              value={editedEmployeeData.pantsSize}
+                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, pantsSize: e.target.value})}
+                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
+                            >
+                              <option value="">Pants Size</option>
+                              <option value="28x30">28x30</option>
+                              <option value="30x30">30x30</option>
+                              <option value="30x32">30x32</option>
+                              <option value="32x30">32x30</option>
+                              <option value="32x32">32x32</option>
+                              <option value="32x34">32x34</option>
+                              <option value="34x30">34x30</option>
+                              <option value="34x32">34x32</option>
+                              <option value="34x34">34x34</option>
+                              <option value="36x30">36x30</option>
+                              <option value="36x32">36x32</option>
+                              <option value="36x34">36x34</option>
+                              <option value="38x30">38x30</option>
+                              <option value="38x32">38x32</option>
+                              <option value="40x30">40x30</option>
+                              <option value="40x32">40x32</option>
+                            </select>
                           </div>
                         ) : (
                           <>
                             <div className="font-medium">{emp.name} {emp.armed && '🔫'} {emp.role === 'supervisor' && '★'} {emp.role === 'rover' && '↔'}</div>
                             <div className="text-xs text-zinc-500 mt-1">{emp.phone}</div>
                             <div className="text-xs text-zinc-600 mt-2">{emp.defaultLocation || 'Rover'}</div>
+                            {emp.guardCardExpiration && <div className="text-xs text-zinc-500 mt-1">Guard Card Exp: {emp.guardCardExpiration}</div>}
+                            {emp.cprCardExpiration && <div className="text-xs text-zinc-500 mt-1">CPR Card Exp: {emp.cprCardExpiration}</div>}
+                            {(emp.shirtSize || emp.pantsSize) && (
+                              <div className="text-xs text-zinc-500 mt-1">
+                                {emp.shirtSize && `Shirt: ${emp.shirtSize}`}{emp.shirtSize && emp.pantsSize && ' | '}{emp.pantsSize && `Pants: ${emp.pantsSize}`}
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
