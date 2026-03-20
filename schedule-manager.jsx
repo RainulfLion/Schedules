@@ -126,7 +126,7 @@ function ScheduleManager() {
   const [loginError, setLoginError] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
 
-  const [employees] = useState(initialEmployees);
+  const [employees, setEmployees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
   const [weekStart, setWeekStart] = useState(getCurrentWeekFriday());
   const [schedule, setSchedule] = useState({});
@@ -177,6 +177,34 @@ function ScheduleManager() {
 
     return () => unsubscribe();
   }, []);
+
+  // Load employee profile fields from Firestore and merge into employees state
+  useEffect(() => {
+    if (!currentUser) return;
+
+    db.collection('employees').get().then((snapshot) => {
+      if (snapshot.empty) return;
+      const profileMap = {};
+      snapshot.docs.forEach(doc => {
+        profileMap[parseInt(doc.id)] = doc.data();
+      });
+      setEmployees(prev => prev.map(emp => {
+        const profile = profileMap[emp.id];
+        if (!profile) return emp;
+        return {
+          ...emp,
+          name: profile.name || emp.name,
+          phone: profile.phone || emp.phone,
+          defaultLocation: profile.defaultLocation || emp.defaultLocation,
+          armed: profile.armed !== undefined ? profile.armed : emp.armed,
+          guardCardExpiration: profile.guardCardExpiration || '',
+          cprCardExpiration: profile.cprCardExpiration || '',
+          shirtSize: profile.shirtSize || '',
+          pantsSize: profile.pantsSize || ''
+        };
+      }));
+    }).catch(err => console.error('Error loading employee profiles:', err));
+  }, [currentUser]);
 
   // Load vacation requests from Firestore with real-time sync
   useEffect(() => {
@@ -486,6 +514,15 @@ function ScheduleManager() {
     });
   };
 
+  // Check if a date is missing or within 2 months of today
+  const isDateFlagged = (dateStr) => {
+    if (!dateStr) return true;
+    const expDate = new Date(dateStr);
+    const now = new Date();
+    const twoMonths = new Date(now.getFullYear(), now.getMonth() + 2, now.getDate());
+    return expDate <= twoMonths;
+  };
+
   // Employee profile editing
   const startEditingEmployee = (emp) => {
     setEditingEmployee(emp.id);
@@ -511,30 +548,22 @@ function ScheduleManager() {
         : emp
     );
 
-    // Update Firestore - find the user document by employeeId
+    // Update Firestore - save to employees collection keyed by employee ID
     try {
-      // Get the user's UID from Firestore by employeeId
-      const usersSnapshot = await db.collection('users')
-        .where('employeeId', '==', editingEmployee)
-        .get();
+      await db.collection('employees').doc(String(editingEmployee)).set({
+        name: editedEmployeeData.name,
+        phone: editedEmployeeData.phone,
+        defaultLocation: editedEmployeeData.defaultLocation,
+        armed: editedEmployeeData.armed,
+        guardCardExpiration: editedEmployeeData.guardCardExpiration,
+        cprCardExpiration: editedEmployeeData.cprCardExpiration,
+        shirtSize: editedEmployeeData.shirtSize,
+        pantsSize: editedEmployeeData.pantsSize
+      }, { merge: true });
 
-      if (!usersSnapshot.empty) {
-        const userDoc = usersSnapshot.docs[0];
-        await db.collection('users').doc(userDoc.id).update({
-          name: editedEmployeeData.name,
-          phone: editedEmployeeData.phone,
-          defaultLocation: editedEmployeeData.defaultLocation,
-          armed: editedEmployeeData.armed,
-          guardCardExpiration: editedEmployeeData.guardCardExpiration,
-          cprCardExpiration: editedEmployeeData.cprCardExpiration,
-          shirtSize: editedEmployeeData.shirtSize,
-          pantsSize: editedEmployeeData.pantsSize
-        });
-      }
-
-      // Also update the initialEmployees in the component (note: this won't persist on refresh)
-      // To make it persist, we'd need to store employees in Firestore too
-      Object.assign(initialEmployees.find(e => e.id === editingEmployee), editedEmployeeData);
+      setEmployees(prev => prev.map(emp =>
+        emp.id === editingEmployee ? { ...emp, ...editedEmployeeData } : emp
+      ));
 
       setEditingEmployee(null);
       setEditedEmployeeData({});
@@ -1051,6 +1080,8 @@ function ScheduleManager() {
                               <option value="XL">XL</option>
                               <option value="2XL">2XL</option>
                               <option value="3XL">3XL</option>
+                              <option value="4XL">4XL</option>
+                              <option value="5XL">5XL</option>
                             </select>
                             <select
                               value={editedEmployeeData.pantsSize}
@@ -1072,8 +1103,20 @@ function ScheduleManager() {
                               <option value="36x34">36x34</option>
                               <option value="38x30">38x30</option>
                               <option value="38x32">38x32</option>
+                              <option value="38x34">38x34</option>
                               <option value="40x30">40x30</option>
                               <option value="40x32">40x32</option>
+                              <option value="40x34">40x34</option>
+                              <option value="42x30">42x30</option>
+                              <option value="42x32">42x32</option>
+                              <option value="44x30">44x30</option>
+                              <option value="44x32">44x32</option>
+                              <option value="46x30">46x30</option>
+                              <option value="46x32">46x32</option>
+                              <option value="48x30">48x30</option>
+                              <option value="48x32">48x32</option>
+                              <option value="50x30">50x30</option>
+                              <option value="50x32">50x32</option>
                             </select>
                           </div>
                         ) : (
@@ -1081,13 +1124,13 @@ function ScheduleManager() {
                             <div className="font-medium">{emp.name} {emp.armed && '🔫'} {emp.role === 'supervisor' && '★'} {emp.role === 'rover' && '↔'}</div>
                             <div className="text-xs text-zinc-500 mt-1">{emp.phone}</div>
                             <div className="text-xs text-zinc-600 mt-2">{emp.defaultLocation || 'Rover'}</div>
-                            <div className={`text-xs mt-1 ${isCertExpiring(emp.guardCardExpiration) ? 'text-red-400 font-medium' : 'text-zinc-500'}`}>
-                              {isCertExpiring(emp.guardCardExpiration) && <span title={emp.guardCardExpiration ? 'Guard card expired or expiring soon' : 'Guard card date not entered'}>🚩 </span>}
-                              Guard Card Exp: {emp.guardCardExpiration || 'Not entered'}
+                            <div className="text-xs mt-1">
+                              {isDateFlagged(emp.guardCardExpiration) && <span className="text-red-500">🚩</span>}
+                              <span className={isDateFlagged(emp.guardCardExpiration) ? 'text-red-400' : 'text-zinc-500'}> Guard Card Exp: {emp.guardCardExpiration || 'Not set'}</span>
                             </div>
-                            <div className={`text-xs mt-1 ${isCertExpiring(emp.cprCardExpiration) ? 'text-red-400 font-medium' : 'text-zinc-500'}`}>
-                              {isCertExpiring(emp.cprCardExpiration) && <span title={emp.cprCardExpiration ? 'CPR card expired or expiring soon' : 'CPR card date not entered'}>🚩 </span>}
-                              CPR Card Exp: {emp.cprCardExpiration || 'Not entered'}
+                            <div className="text-xs mt-1">
+                              {isDateFlagged(emp.cprCardExpiration) && <span className="text-red-500">🚩</span>}
+                              <span className={isDateFlagged(emp.cprCardExpiration) ? 'text-red-400' : 'text-zinc-500'}> CPR Card Exp: {emp.cprCardExpiration || 'Not set'}</span>
                             </div>
                             {(emp.shirtSize || emp.pantsSize) && (
                               <div className="text-xs text-zinc-500 mt-1">
