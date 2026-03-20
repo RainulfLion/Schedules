@@ -1077,6 +1077,8 @@ function ScheduleManager() {
                               <option value="XL">XL</option>
                               <option value="2XL">2XL</option>
                               <option value="3XL">3XL</option>
+                              <option value="4XL">4XL</option>
+                              <option value="5XL">5XL</option>
                             </select>
                             <select
                               value={editedEmployeeData.pantsSize}
@@ -1098,8 +1100,20 @@ function ScheduleManager() {
                               <option value="36x34">36x34</option>
                               <option value="38x30">38x30</option>
                               <option value="38x32">38x32</option>
+                              <option value="38x34">38x34</option>
                               <option value="40x30">40x30</option>
                               <option value="40x32">40x32</option>
+                              <option value="40x34">40x34</option>
+                              <option value="42x30">42x30</option>
+                              <option value="42x32">42x32</option>
+                              <option value="44x30">44x30</option>
+                              <option value="44x32">44x32</option>
+                              <option value="46x30">46x30</option>
+                              <option value="46x32">46x32</option>
+                              <option value="48x30">48x30</option>
+                              <option value="48x32">48x32</option>
+                              <option value="50x30">50x30</option>
+                              <option value="50x32">50x32</option>
                             </select>
                           </div>
                         ) : (
