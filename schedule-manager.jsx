@@ -107,6 +107,17 @@ const isHoliday = (date) => {
 };
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 
+// Check if a certification date is missing, expired, or expiring within 2 months
+function isCertExpiring(dateStr) {
+  if (!dateStr) return true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expDate = new Date(dateStr + 'T00:00:00');
+  const twoMonthsFromNow = new Date(today);
+  twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
+  return expDate <= twoMonthsFromNow;
+}
+
 function ScheduleManager() {
   // Authentication state
   const [currentUser, setCurrentUser] = useState(null);
@@ -869,6 +880,7 @@ function ScheduleManager() {
                           {emp.armed && <span className="text-[10px]">🔫</span>}
                           {emp.role === 'supervisor' && <span className="text-[10px] text-yellow-400">★</span>}
                           {emp.role === 'rover' && <span className="text-[10px] text-cyan-400">↔</span>}
+                          {(isCertExpiring(emp.guardCardExpiration) || isCertExpiring(emp.cprCardExpiration)) && <span className="text-[10px] text-red-400" title="Certification expired or expiring soon">🚩</span>}
                         </div>
                         <div className="text-xs text-zinc-500">{emp.phone}</div>
                       </td>
@@ -1069,8 +1081,14 @@ function ScheduleManager() {
                             <div className="font-medium">{emp.name} {emp.armed && '🔫'} {emp.role === 'supervisor' && '★'} {emp.role === 'rover' && '↔'}</div>
                             <div className="text-xs text-zinc-500 mt-1">{emp.phone}</div>
                             <div className="text-xs text-zinc-600 mt-2">{emp.defaultLocation || 'Rover'}</div>
-                            {emp.guardCardExpiration && <div className="text-xs text-zinc-500 mt-1">Guard Card Exp: {emp.guardCardExpiration}</div>}
-                            {emp.cprCardExpiration && <div className="text-xs text-zinc-500 mt-1">CPR Card Exp: {emp.cprCardExpiration}</div>}
+                            <div className={`text-xs mt-1 ${isCertExpiring(emp.guardCardExpiration) ? 'text-red-400 font-medium' : 'text-zinc-500'}`}>
+                              {isCertExpiring(emp.guardCardExpiration) && <span title={emp.guardCardExpiration ? 'Guard card expired or expiring soon' : 'Guard card date not entered'}>🚩 </span>}
+                              Guard Card Exp: {emp.guardCardExpiration || 'Not entered'}
+                            </div>
+                            <div className={`text-xs mt-1 ${isCertExpiring(emp.cprCardExpiration) ? 'text-red-400 font-medium' : 'text-zinc-500'}`}>
+                              {isCertExpiring(emp.cprCardExpiration) && <span title={emp.cprCardExpiration ? 'CPR card expired or expiring soon' : 'CPR card date not entered'}>🚩 </span>}
+                              CPR Card Exp: {emp.cprCardExpiration || 'Not entered'}
+                            </div>
                             {(emp.shirtSize || emp.pantsSize) && (
                               <div className="text-xs text-zinc-500 mt-1">
                                 {emp.shirtSize && `Shirt: ${emp.shirtSize}`}{emp.shirtSize && emp.pantsSize && ' | '}{emp.pantsSize && `Pants: ${emp.pantsSize}`}
