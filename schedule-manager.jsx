@@ -107,6 +107,17 @@ const isHoliday = (date) => {
 };
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 
+// Check if a certification date is missing, expired, or expiring within 2 months
+function isCertExpiring(dateStr) {
+  if (!dateStr) return true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expDate = new Date(dateStr + 'T00:00:00');
+  const twoMonthsFromNow = new Date(today);
+  twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
+  return expDate <= twoMonthsFromNow;
+}
+
 function ScheduleManager() {
   // Authentication state
   const [currentUser, setCurrentUser] = useState(null);
@@ -898,6 +909,7 @@ function ScheduleManager() {
                           {emp.armed && <span className="text-[10px]">🔫</span>}
                           {emp.role === 'supervisor' && <span className="text-[10px] text-yellow-400">★</span>}
                           {emp.role === 'rover' && <span className="text-[10px] text-cyan-400">↔</span>}
+                          {(isCertExpiring(emp.guardCardExpiration) || isCertExpiring(emp.cprCardExpiration)) && <span className="text-[10px] text-red-400" title="Certification expired or expiring soon">🚩</span>}
                         </div>
                         <div className="text-xs text-zinc-500">{emp.phone}</div>
                       </td>
