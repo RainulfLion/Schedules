@@ -115,7 +115,7 @@ function ScheduleManager() {
   const [loginError, setLoginError] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
 
-  const [employees] = useState(initialEmployees);
+  const [employees, setEmployees] = useState(initialEmployees);
   const [rules, setRules] = useState(defaultRules);
   const [weekStart, setWeekStart] = useState(getCurrentWeekFriday());
   const [schedule, setSchedule] = useState({});
@@ -166,6 +166,35 @@ function ScheduleManager() {
 
     return () => unsubscribe();
   }, []);
+
+  // Load employee profile fields from Firestore and merge into employees state
+  useEffect(() => {
+    if (!currentUser) return;
+
+    db.collection('users').get().then((snapshot) => {
+      if (snapshot.empty) return;
+      const profileMap = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.employeeId) profileMap[data.employeeId] = data;
+      });
+      setEmployees(prev => prev.map(emp => {
+        const profile = profileMap[emp.id];
+        if (!profile) return emp;
+        return {
+          ...emp,
+          name: profile.name || emp.name,
+          phone: profile.phone || emp.phone,
+          defaultLocation: profile.defaultLocation || emp.defaultLocation,
+          armed: profile.armed !== undefined ? profile.armed : emp.armed,
+          guardCardExpiration: profile.guardCardExpiration || '',
+          cprCardExpiration: profile.cprCardExpiration || '',
+          shirtSize: profile.shirtSize || '',
+          pantsSize: profile.pantsSize || ''
+        };
+      }));
+    }).catch(err => console.error('Error loading employee profiles:', err));
+  }, [currentUser]);
 
   // Load vacation requests from Firestore with real-time sync
   useEffect(() => {
@@ -530,9 +559,9 @@ function ScheduleManager() {
         });
       }
 
-      // Also update the initialEmployees in the component (note: this won't persist on refresh)
-      // To make it persist, we'd need to store employees in Firestore too
-      Object.assign(initialEmployees.find(e => e.id === editingEmployee), editedEmployeeData);
+      setEmployees(prev => prev.map(emp =>
+        emp.id === editingEmployee ? { ...emp, ...editedEmployeeData } : emp
+      ));
 
       setEditingEmployee(null);
       setEditedEmployeeData({});
