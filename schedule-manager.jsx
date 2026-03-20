@@ -171,12 +171,11 @@ function ScheduleManager() {
   useEffect(() => {
     if (!currentUser) return;
 
-    db.collection('users').get().then((snapshot) => {
+    db.collection('employees').get().then((snapshot) => {
       if (snapshot.empty) return;
       const profileMap = {};
       snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.employeeId) profileMap[data.employeeId] = data;
+        profileMap[parseInt(doc.id)] = doc.data();
       });
       setEmployees(prev => prev.map(emp => {
         const profile = profileMap[emp.id];
@@ -538,26 +537,18 @@ function ScheduleManager() {
         : emp
     );
 
-    // Update Firestore - find the user document by employeeId
+    // Update Firestore - save to employees collection keyed by employee ID
     try {
-      // Get the user's UID from Firestore by employeeId
-      const usersSnapshot = await db.collection('users')
-        .where('employeeId', '==', editingEmployee)
-        .get();
-
-      if (!usersSnapshot.empty) {
-        const userDoc = usersSnapshot.docs[0];
-        await db.collection('users').doc(userDoc.id).update({
-          name: editedEmployeeData.name,
-          phone: editedEmployeeData.phone,
-          defaultLocation: editedEmployeeData.defaultLocation,
-          armed: editedEmployeeData.armed,
-          guardCardExpiration: editedEmployeeData.guardCardExpiration,
-          cprCardExpiration: editedEmployeeData.cprCardExpiration,
-          shirtSize: editedEmployeeData.shirtSize,
-          pantsSize: editedEmployeeData.pantsSize
-        });
-      }
+      await db.collection('employees').doc(String(editingEmployee)).set({
+        name: editedEmployeeData.name,
+        phone: editedEmployeeData.phone,
+        defaultLocation: editedEmployeeData.defaultLocation,
+        armed: editedEmployeeData.armed,
+        guardCardExpiration: editedEmployeeData.guardCardExpiration,
+        cprCardExpiration: editedEmployeeData.cprCardExpiration,
+        shirtSize: editedEmployeeData.shirtSize,
+        pantsSize: editedEmployeeData.pantsSize
+      }, { merge: true });
 
       setEmployees(prev => prev.map(emp =>
         emp.id === editingEmployee ? { ...emp, ...editedEmployeeData } : emp
