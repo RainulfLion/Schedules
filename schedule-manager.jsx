@@ -9,6 +9,10 @@ const initialEmployees = [
   { id: 6, name: 'Goodlow, Ernest', phone: '602-710-6198', defaultLocation: '5755 N 19th Ave', armed: false, role: 'guard' },
   { id: 7, name: 'Romero, Gilberto', phone: '602-733-3248', defaultLocation: '6026 S. 7th Ave', armed: false, role: 'guard' },
   { id: 8, name: 'Valerio, Kevin', phone: '623-693-1007', defaultLocation: '5401 W. Indian School', armed: true, role: 'guard' },
+  { id: 9, name: 'Blanding, Elvon', phone: '602-441-7354', defaultLocation: null, armed: false, role: 'guard' },
+  { id: 10, name: 'Tucker, Dylon', phone: '317-499-5206', defaultLocation: null, armed: false, role: 'guard' },
+  { id: 11, name: 'Williams, Brandy', phone: '480-386-4097', defaultLocation: null, armed: false, role: 'guard' },
+  { id: 12, name: 'Ducar, David', phone: '303-906-1191', defaultLocation: null, armed: false, role: 'guard' },
 ];
 
 const locations = [
@@ -75,7 +79,11 @@ const userEmailMap = {
   gonzalez: 'gonzalez@security.com',
   goodlow: 'goodlow@security.com',
   romero: 'romero@security.com',
-  valerio: 'valerio@security.com'
+  valerio: 'valerio@security.com',
+  blanding: 'blanding@security.com',
+  tucker: 'tucker@security.com',
+  williams: 'williams@security.com',
+  ducar: 'ducar@security.com'
 };
 
 const getWeekDates = (startDate) => {
@@ -275,7 +283,7 @@ function ScheduleManager() {
     const rangeStart = weekDates[0] < monthStart ? new Date(weekDates[0]) : monthStart;
     const rangeEnd = weekDates[6] > monthEnd ? new Date(weekDates[6]) : monthEnd;
 
-    const bankGuards = employees.filter(emp => emp.role === 'guard');
+    const bankGuards = employees.filter(emp => emp.role === 'guard' && emp.defaultLocation);
 
     for (let date = new Date(rangeStart); date <= rangeEnd; date.setDate(date.getDate() + 1)) {
       const dateKey = formatDateISO(date);
@@ -321,6 +329,8 @@ function ScheduleManager() {
           entry = coveragePost
             ? { status: 'work', location: coveragePost, hours, time }
             : { status: 'oncall', location: 'On Call', hours: 0 };
+        } else if (!emp.defaultLocation) {
+          entry = { status: 'oncall', location: 'On Call', hours: 0 };
         } else if (rotationDayOff?.id === emp.id) {
           entry = { status: 'nowork', location: '', hours: 0 };
         } else {
@@ -916,7 +926,7 @@ function ScheduleManager() {
 
             <div className="grid md:grid-cols-2 gap-4">
               <div><p className="text-sm text-zinc-500">Phone</p><p className="font-medium">{emp.phone || 'Not set'}</p></div>
-              <div><p className="text-sm text-zinc-500">Usual Post</p><p className="font-medium">{emp.defaultLocation || 'Rover'}</p></div>
+              <div><p className="text-sm text-zinc-500">Usual Post</p><p className="font-medium">{emp.defaultLocation || (emp.role === 'rover' ? 'Rover' : 'Not assigned yet')}</p></div>
               <div><p className="text-sm text-zinc-500">Armed</p><p className="font-medium">{emp.armed ? '🔫 Yes' : 'No'}</p></div>
               <div><p className="text-sm text-zinc-500">Uniform</p><p className="font-medium">{[emp.shirtSize && `Shirt ${emp.shirtSize}`, emp.pantsSize && `Pants ${emp.pantsSize}`].filter(Boolean).join(' · ') || 'Not set'}</p></div>
               <div>
