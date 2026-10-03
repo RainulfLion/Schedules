@@ -106,14 +106,6 @@ const FirebaseHelpers = {
     return this.saveRequestsCollection('vacationRequests', requests);
   },
 
-  saveWorkRequests(requests) {
-    return this.saveRequestsCollection('workRequests', requests);
-  },
-
-  onWorkRequestsChange(callback) {
-    return this.onRequestsCollectionChange('workRequests', callback);
-  },
-
   // Get manual overrides
   async getManualOverrides() {
     const doc = await db.collection('settings').doc('manualOverrides').get();
