@@ -14,7 +14,8 @@ const initialEmployees = [
   { id: 12, name: 'Ducar, David', phone: '303-906-1191', defaultLocation: null, armed: false, role: 'guard' },
 ];
 
-const locations = [
+// Used until a supervisor saves a post list to Firestore
+const DEFAULT_POSTS = [
   { name: '5401 W. Indian School', armed: true },
   { name: '5025 W Baseline Rd', armed: false },
   { name: '4303 W. Olive', armed: false },
@@ -23,6 +24,11 @@ const locations = [
   { name: '5755 N 19th Ave', armed: false },
   { name: 'Supervisor Post', armed: false, supervisorOnly: true },
 ];
+
+// Temporary posts only exist between their start and end dates
+const isPostOpenOn = (post, dateStr) =>
+  !post.temporary || ((!post.startDate || dateStr >= post.startDate) && (!post.endDate || dateStr <= post.endDate));
+const isPostExpired = (post, todayStr) => post.temporary && post.endDate && post.endDate < todayStr;
 
 const STATUS_OPTIONS = ['work', 'vacation', 'holiday', 'nowork', 'oncall', 'closed'];
 
@@ -187,9 +193,11 @@ function ScheduleManager() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [rangeEnd, setRangeEnd] = useState('');
   const [shiftForm, setShiftForm] = useState({
-    empId: '', location: locations[0].name, start: '08:30', end: '17:30', from: '', to: '', days: [1, 2, 3, 4, 5, 6]
+    empId: '', location: DEFAULT_POSTS[0].name, start: '08:30', end: '17:30', from: '', to: '', days: [1, 2, 3, 4, 5, 6]
   });
   const [shiftMessage, setShiftMessage] = useState('');
+  const [newPost, setNewPost] = useState({ name: '', armed: false, temporary: false, startDate: '', endDate: '' });
+  const [postMessage, setPostMessage] = useState(null);
   const [accountForm, setAccountForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', newEmail: '' });
   const [accountMessage, setAccountMessage] = useState(null);
   const [viewEmployeeId, setViewEmployeeId] = useState(null);
@@ -203,6 +211,10 @@ function ScheduleManager() {
     cb => FirebaseHelpers.onVacationRequestsChange(cb), data => FirebaseHelpers.saveVacationRequests(data));
   const [manualOverrides, setManualOverrides] = useFirestoreSync(signedIn,
     cb => FirebaseHelpers.onManualOverridesChange(cb), data => FirebaseHelpers.saveManualOverrides(data));
+  const [postsData, setPostsData] = useFirestoreSync(signedIn,
+    cb => FirebaseHelpers.onPostsChange(cb), data => FirebaseHelpers.savePosts(data));
+  const posts = postsData.posts || DEFAULT_POSTS;
+  const setPosts = (update) => setPostsData(prev => ({ posts: update(prev.posts || DEFAULT_POSTS) }));
 
   const isSupervisor = currentUser?.role === 'supervisor';
   const viewedId = viewEmployeeId ?? currentUser?.employeeId;
@@ -864,11 +876,14 @@ function ScheduleManager() {
       setShiftMessage('Pick a guard, a start and end date, and at least one weekday.');
       return;
     }
+    const post = posts.find(p => p.name === location);
     const entries = {};
     const skipped = [];
+    let outsidePost = 0;
     for (let d = new Date(from + 'T12:00:00'); formatDateISO(d) <= to; d.setDate(d.getDate() + 1)) {
       if (!days.includes(d.getDay())) continue;
       const dateStr = formatDateISO(d);
+      if (post && !isPostOpenOn(post, dateStr)) { outsidePost++; continue; }
       const req = vacationRequests[empId]?.[dateStr];
       if (req && req.status !== 'denied') { skipped.push(dateStr); continue; }
       entries[`${empId}_${dateStr}`] = {
@@ -880,7 +895,38 @@ function ScheduleManager() {
     setManualOverrides(prev => ({ ...prev, ...entries }));
     const name = employees.find(e => e.id === parseInt(empId))?.name;
     setShiftMessage(`Created ${count} shift${count === 1 ? '' : 's'} for ${name}.` +
-      (skipped.length ? ` Skipped ${skipped.length} day${skipped.length === 1 ? '' : 's'} where they have time off.` : ''));
+      (skipped.length ? ` Skipped ${skipped.length} day${skipped.length === 1 ? '' : 's'} where they have time off.` : '') +
+      (outsidePost ? ` Skipped ${outsidePost} day${outsidePost === 1 ? '' : 's'} outside this temporary post's dates.` : ''));
+  };
+
+  const addPost = () => {
+    const name = newPost.name.trim();
+    if (!name) return setPostMessage({ ok: false, text: 'Enter a name or address for the post.' });
+    if (posts.some(p => p.name.toLowerCase() === name.toLowerCase())) return setPostMessage({ ok: false, text: 'A post with that name already exists.' });
+    if (newPost.temporary && (!newPost.startDate || !newPost.endDate || newPost.endDate < newPost.startDate)) {
+      return setPostMessage({ ok: false, text: 'A temporary post needs a start date and an end date on or after it.' });
+    }
+    const post = { name, armed: newPost.armed };
+    if (newPost.temporary) Object.assign(post, { temporary: true, startDate: newPost.startDate, endDate: newPost.endDate });
+    setPosts(list => [...list, post]);
+    setNewPost({ name: '', armed: false, temporary: false, startDate: '', endDate: '' });
+    setPostMessage({ ok: true, text: `Added ${name}. It is now available when creating shifts.` });
+  };
+
+  const updatePost = (name, changes) => setPosts(list => list.map(p => p.name === name ? { ...p, ...changes } : p));
+
+  const removePost = (name) => {
+    const todayStr = formatDateISO(new Date());
+    const shiftCount = Object.entries(manualOverrides)
+      .filter(([key, s]) => s.status === 'work' && s.location === name && key.split('_')[1] >= todayStr).length;
+    const usualFor = employees.filter(e => e.defaultLocation === name).map(e => e.name);
+    const warnings = [
+      shiftCount && `${shiftCount} upcoming shift${shiftCount === 1 ? ' is' : 's are'} still assigned there (they will stay on the schedule).`,
+      usualFor.length && `It is the usual post for ${usualFor.join('; ')}.`,
+    ].filter(Boolean);
+    if (!window.confirm(`Remove ${name}?${warnings.length ? '\n\n' + warnings.join('\n') : ''}`)) return;
+    setPosts(list => list.filter(p => p.name !== name));
+    setPostMessage({ ok: true, text: `Removed ${name}.` });
   };
 
   const removeShift = (key) => setManualOverrides(prev => {
@@ -903,8 +949,9 @@ function ScheduleManager() {
       .sort((a, b) => a.dateStr.localeCompare(b.dateStr) || a.empId - b.empId);
 
     return (
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 space-y-4 h-fit">
+      <div className="grid lg:grid-cols-2 gap-6 items-start">
+        <div className="space-y-6">
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 space-y-4">
           <h2 className="text-lg font-semibold">Create Shifts</h2>
           <div>
             <label className="block text-sm mb-1">Guard</label>
@@ -916,7 +963,9 @@ function ScheduleManager() {
           <div>
             <label className="block text-sm mb-1">Post</label>
             <select value={shiftForm.location} onChange={set('location')} className={inputClass}>
-              {locations.map(loc => <option key={loc.name} value={loc.name}>{loc.name}{loc.armed ? ' (armed)' : ''}</option>)}
+              {posts.filter(p => !isPostExpired(p, todayStr)).map(loc => (
+                <option key={loc.name} value={loc.name}>{loc.name}{loc.armed ? ' (armed)' : ''}{loc.temporary ? ` (temporary until ${loc.endDate})` : ''}</option>
+              ))}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -936,11 +985,62 @@ function ScheduleManager() {
           <p className="text-xs text-zinc-500">{shiftLength(shiftForm.start, shiftForm.end)} hours per shift. Days the guard already has time off are skipped.</p>
           {(() => {
             const emp = employees.find(e => e.id === parseInt(shiftForm.empId));
-            const loc = locations.find(l => l.name === shiftForm.location);
+            const loc = posts.find(l => l.name === shiftForm.location);
             return emp && loc?.armed && !emp.armed && <p className="text-sm text-red-300">⚠ This post needs an armed guard and {emp.name} is not armed.</p>;
           })()}
           <button onClick={createShifts} className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium">Create Shifts</button>
           {shiftMessage && <p className="text-sm text-emerald-300">{shiftMessage}</p>}
+        </div>
+
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 space-y-4 h-fit">
+          <h2 className="text-lg font-semibold">Posts</h2>
+          <div className="space-y-2">
+            {posts.map(p => {
+              const expired = isPostExpired(p, todayStr);
+              return (
+                <div key={p.name} className={`bg-zinc-800/50 rounded-lg px-3 py-2 text-sm ${expired ? 'opacity-50' : ''}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium">
+                      {p.name}
+                      {p.supervisorOnly && <span className="ml-2 px-2 py-0.5 bg-yellow-900/40 text-yellow-300 text-[10px] rounded">SUP</span>}
+                      {p.temporary && <span className="ml-2 px-2 py-0.5 bg-sky-900/40 text-sky-300 text-[10px] rounded">{expired ? 'ENDED' : 'TEMP'}</span>}
+                    </div>
+                    {!p.supervisorOnly && (
+                      <button onClick={() => removePost(p.name)} className="px-3 py-1 bg-red-900/50 hover:bg-red-800 text-red-200 rounded-lg text-xs min-h-[36px]">Remove</button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-zinc-300">
+                    <label className="flex items-center gap-1"><input type="checkbox" checked={!!p.armed} onChange={e => updatePost(p.name, { armed: e.target.checked })} /> Armed required</label>
+                    {p.temporary && (
+                      <>
+                        <label className="flex items-center gap-1">From <input type="date" value={p.startDate} onChange={e => updatePost(p.name, { startDate: e.target.value })} className="px-2 py-1 bg-zinc-800 border border-zinc-700 rounded" /></label>
+                        <label className="flex items-center gap-1">To <input type="date" value={p.endDate} min={p.startDate} onChange={e => updatePost(p.name, { endDate: e.target.value })} className="px-2 py-1 bg-zinc-800 border border-zinc-700 rounded" /></label>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-zinc-800 pt-4 space-y-3">
+            <h3 className="font-medium">Add a Post</h3>
+            <input type="text" value={newPost.name} onChange={e => setNewPost({ ...newPost, name: e.target.value })} placeholder="Name or address, e.g. 1234 W. Camelback" className={inputClass} />
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={newPost.armed} onChange={e => setNewPost({ ...newPost, armed: e.target.checked })} /> Armed required</label>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={newPost.temporary} onChange={e => setNewPost({ ...newPost, temporary: e.target.checked })} /> Temporary</label>
+            </div>
+            {newPost.temporary && (
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-sm mb-1">Starts</label><input type="date" value={newPost.startDate} onChange={e => setNewPost({ ...newPost, startDate: e.target.value })} className={inputClass} /></div>
+                <div><label className="block text-sm mb-1">Ends</label><input type="date" value={newPost.endDate} min={newPost.startDate} onChange={e => setNewPost({ ...newPost, endDate: e.target.value })} className={inputClass} /></div>
+              </div>
+            )}
+            <p className="text-xs text-zinc-500">Temporary posts only show on the coverage grid and accept shifts between their start and end dates.</p>
+            <button onClick={addPost} className="w-full px-4 py-3 bg-sky-700 hover:bg-sky-600 rounded-lg font-medium">Add Post</button>
+            {postMessage && <p className={`text-sm ${postMessage.ok ? 'text-emerald-300' : 'text-red-400'}`}>{postMessage.text}</p>}
+          </div>
+        </div>
         </div>
 
         <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5">
@@ -1043,16 +1143,18 @@ function ScheduleManager() {
               </tr>
             </thead>
             <tbody>
-              {locations.map(loc => (
+              {posts.filter(loc => weekDates.some(d => isPostOpenOn(loc, formatDateISO(d)))).map(loc => (
                 <tr key={loc.name} className="border-b border-zinc-800/50">
                   <td className="p-3">
                     <span className="font-medium">{loc.name}</span>
                     {loc.armed && <span className="ml-2 px-2 py-0.5 bg-red-900/40 text-red-300 text-[10px] rounded">ARMED</span>}
                     {loc.supervisorOnly && <span className="ml-2 px-2 py-0.5 bg-yellow-900/40 text-yellow-300 text-[10px] rounded">SUP</span>}
+                    {loc.temporary && <span className="ml-2 px-2 py-0.5 bg-sky-900/40 text-sky-300 text-[10px] rounded">TEMP</span>}
                   </td>
                   {weekDates.map(d => {
                     const dk = formatDateISO(d);
                     const sun = isSunday(d), hol = isHoliday(d);
+                    if (!isPostOpenOn(loc, dk)) return <td key={dk} className="p-2"><div className="rounded-lg p-2 text-center text-xs text-zinc-600">—</div></td>;
                     if (sun || hol) return <td key={dk} className="p-2"><div className={`rounded-lg p-2 text-center text-xs ${sun ? 'bg-zinc-700/30 text-zinc-500' : 'bg-blue-900/30 text-blue-400'}`}>{sun ? 'CLOSED' : 'HOLIDAY'}</div></td>;
 
                     const covering = employees.filter(e => {
@@ -1150,7 +1252,7 @@ function ScheduleManager() {
                   <label className="block text-sm font-medium mb-2">Usual Post</label>
                   <select value={profileData.defaultLocation} onChange={setField('defaultLocation')} className={inputClass}>
                     <option value="">Rover (no fixed post)</option>
-                    {locations.map(loc => <option key={loc.name} value={loc.name}>{loc.name}</option>)}
+                    {posts.filter(p => !p.temporary).map(loc => <option key={loc.name} value={loc.name}>{loc.name}</option>)}
                   </select>
                 </div>
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={profileData.armed} onChange={setField('armed')} /> Armed</label>

@@ -119,6 +119,24 @@ const FirebaseHelpers = {
     });
   },
 
+  // Posts live in one settings doc; an empty object means none saved yet (use the built-in list)
+  async savePosts(data) {
+    await db.collection('settings').doc('posts').set({
+      posts: data.posts,
+      lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  },
+
+  onPostsChange(callback) {
+    return db.collection('settings').doc('posts').onSnapshot(
+      doc => callback(doc.exists && Array.isArray(doc.data().posts) ? { posts: doc.data().posts } : {}),
+      error => {
+        console.error('Error listening to posts:', error);
+        callback({});
+      }
+    );
+  },
+
   onVacationRequestsChange(callback) {
     return this.onRequestsCollectionChange('vacationRequests', callback);
   },
