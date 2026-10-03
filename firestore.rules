@@ -24,11 +24,25 @@ service cloud.firestore {
       allow write: if isSupervisor() || isOwner(userId);
     }
 
-    // Vacation requests - guards can read/write their own, supervisors can read/write all
+    function isEmployee(employeeId) {
+      return isSignedIn() &&
+             string(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.employeeId) == employeeId;
+    }
+
+    // Request docs are keyed by employee ID. Delete is open to signed-in users because
+    // cancelling a guard's last pending request removes the whole document.
     match /vacationRequests/{employeeId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /workRequests/{employeeId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Employee profiles - anyone signed in can read, guards edit their own, supervisors edit all
+    match /employees/{employeeId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isSupervisor();
+      allow write: if isSupervisor() || isEmployee(employeeId);
     }
 
     // Manual overrides - only supervisors can modify
