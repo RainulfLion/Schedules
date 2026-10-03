@@ -8,7 +8,7 @@ const initialEmployees = [
   { id: 6, name: 'Goodlow, Ernest', phone: '602-710-6198', defaultLocation: '5755 N 19th Ave', armed: false, role: 'guard' },
   { id: 7, name: 'Romero, Gilberto', phone: '602-733-3248', defaultLocation: '6026 S. 7th Ave', armed: false, role: 'guard' },
   { id: 8, name: 'Valerio, Kevin', phone: '623-693-1007', defaultLocation: '5401 W. Indian School', armed: true, role: 'guard' },
-  { id: 9, name: 'Blanding, Elvon', phone: '602-441-7354', defaultLocation: null, armed: false, role: 'guard' },
+  { id: 9, name: 'Blanding, Elvon', phone: '602-441-7354', defaultLocation: '5025 W Baseline Rd', armed: false, role: 'guard' },
   { id: 10, name: 'Tucker, Dylon', phone: '317-499-5206', defaultLocation: null, armed: false, role: 'guard' },
   { id: 11, name: 'Williams, Brandy', phone: '480-386-4097', defaultLocation: null, armed: false, role: 'guard' },
   { id: 12, name: 'Ducar, David', phone: '303-906-1191', defaultLocation: null, armed: false, role: 'guard' },
@@ -111,6 +111,13 @@ const isSaturday = (date) => date.getDay() === 6;
 const isHoliday = (date) => (federalHolidays[date.getFullYear()] || []).find(h => h.date === formatDateISO(date));
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 const shiftTime = (date) => isSaturday(date) ? '0830-1430' : '0830-1730';
+const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+// Shifts that end at or before they start run past midnight
+const shiftLength = (start, end) => {
+  const minutes = toMinutes(end) - toMinutes(start);
+  return Math.round(((minutes <= 0 ? minutes + 1440 : minutes) / 60) * 100) / 100;
+};
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const startOfToday = () => new Date(new Date().setHours(0, 0, 0, 0));
 
 function isCertExpiring(dateStr) {
@@ -179,6 +186,10 @@ function ScheduleManager() {
   const [activeTab, setActiveTab] = useState('calendar');
   const [selectedDate, setSelectedDate] = useState(null);
   const [rangeEnd, setRangeEnd] = useState('');
+  const [shiftForm, setShiftForm] = useState({
+    empId: '', location: locations[0].name, start: '08:30', end: '17:30', from: '', to: '', days: [1, 2, 3, 4, 5, 6]
+  });
+  const [shiftMessage, setShiftMessage] = useState('');
   const [viewEmployeeId, setViewEmployeeId] = useState(null);
   const [draggedEmployee, setDraggedEmployee] = useState(null);
 
@@ -598,10 +609,13 @@ function ScheduleManager() {
               const cell = schedule[viewedId]?.[dateStr] || {};
               const req = vacationRequests[viewedId]?.[dateStr];
               const past = day < today;
-              const closed = isSunday(day) || holiday;
+              const assignedShift = cell.manual && cell.status === 'work';
+              const closed = (isSunday(day) || holiday) && !assignedShift;
 
               let style, label, icon, sub = null;
-              if (isSunday(day)) {
+              if (assignedShift && !(req && req.status !== 'denied')) {
+                style = 'bg-teal-800/60 text-teal-200'; label = `Shift ${cell.time || ''}`; icon = '💼'; sub = cell.location;
+              } else if (isSunday(day)) {
                 style = 'bg-zinc-800/40 text-zinc-500'; label = 'Closed'; icon = '';
               } else if (holiday) {
                 style = 'bg-blue-900/40 text-blue-300'; label = holiday.name; icon = '🎉';
@@ -642,7 +656,8 @@ function ScheduleManager() {
           {Object.values(TIME_OFF_TYPES).map(t => <span key={t.label}>{t.icon} {t.label}</span>)}
           <span>⏳ Waiting for approval</span>
           <span>🎉 Holiday</span>
-          <span>📍 Scheduled post</span>
+          <span>💼 Assigned shift</span>
+          <span>📍 Usual post</span>
         </div>
 
         {selectedDate && renderDayModal()}
@@ -768,6 +783,114 @@ function ScheduleManager() {
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const createShifts = () => {
+    const { empId, location, start, end, from, to, days } = shiftForm;
+    if (!empId || !from || !to || to < from || days.length === 0) {
+      setShiftMessage('Pick a guard, a start and end date, and at least one weekday.');
+      return;
+    }
+    const entries = {};
+    const skipped = [];
+    for (let d = new Date(from + 'T12:00:00'); formatDateISO(d) <= to; d.setDate(d.getDate() + 1)) {
+      if (!days.includes(d.getDay())) continue;
+      const dateStr = formatDateISO(d);
+      const req = vacationRequests[empId]?.[dateStr];
+      if (req && req.status !== 'denied') { skipped.push(dateStr); continue; }
+      entries[`${empId}_${dateStr}`] = {
+        status: 'work', location, time: `${start.replace(':', '')}-${end.replace(':', '')}`,
+        hours: shiftLength(start, end), manual: true
+      };
+    }
+    const count = Object.keys(entries).length;
+    setManualOverrides(prev => ({ ...prev, ...entries }));
+    const name = employees.find(e => e.id === parseInt(empId))?.name;
+    setShiftMessage(`Created ${count} shift${count === 1 ? '' : 's'} for ${name}.` +
+      (skipped.length ? ` Skipped ${skipped.length} day${skipped.length === 1 ? '' : 's'} where they have time off.` : ''));
+  };
+
+  const removeShift = (key) => setManualOverrides(prev => {
+    const next = { ...prev };
+    delete next[key];
+    return next;
+  });
+
+  const renderShifts = () => {
+    const inputClass = 'w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500';
+    const set = (field) => (e) => setShiftForm({ ...shiftForm, [field]: e.target.value });
+    const toggleDay = (i) => setShiftForm({
+      ...shiftForm, days: shiftForm.days.includes(i) ? shiftForm.days.filter(x => x !== i) : [...shiftForm.days, i]
+    });
+    const todayStr = formatDateISO(new Date());
+
+    const upcoming = Object.entries(manualOverrides)
+      .map(([key, s]) => { const [empId, dateStr] = key.split('_'); return { key, empId: parseInt(empId), dateStr, ...s }; })
+      .filter(s => s.status === 'work' && s.dateStr >= todayStr)
+      .sort((a, b) => a.dateStr.localeCompare(b.dateStr) || a.empId - b.empId);
+
+    return (
+      <div className="grid lg:grid-cols-2 gap-6">
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 space-y-4 h-fit">
+          <h2 className="text-lg font-semibold">Create Shifts</h2>
+          <div>
+            <label className="block text-sm mb-1">Guard</label>
+            <select value={shiftForm.empId} onChange={set('empId')} className={inputClass}>
+              <option value="">Select a guard</option>
+              {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}{emp.armed ? ' (armed)' : ''}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Post</label>
+            <select value={shiftForm.location} onChange={set('location')} className={inputClass}>
+              {locations.map(loc => <option key={loc.name} value={loc.name}>{loc.name}{loc.armed ? ' (armed)' : ''}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="block text-sm mb-1">Start time</label><input type="time" value={shiftForm.start} onChange={set('start')} className={inputClass} /></div>
+            <div><label className="block text-sm mb-1">End time</label><input type="time" value={shiftForm.end} onChange={set('end')} className={inputClass} /></div>
+            <div><label className="block text-sm mb-1">From</label><input type="date" value={shiftForm.from} min={todayStr} onChange={set('from')} className={inputClass} /></div>
+            <div><label className="block text-sm mb-1">Through</label><input type="date" value={shiftForm.to} min={shiftForm.from || todayStr} onChange={set('to')} className={inputClass} /></div>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Days of the week</label>
+            <div className="flex flex-wrap gap-2">
+              {WEEKDAYS.map((d, i) => (
+                <button key={d} onClick={() => toggleDay(i)} className={`px-3 py-2 rounded-lg text-sm min-w-[52px] ${shiftForm.days.includes(i) ? 'bg-emerald-700 text-white' : 'bg-zinc-800 text-zinc-400'}`}>{d}</button>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">{shiftLength(shiftForm.start, shiftForm.end)} hours per shift. Days the guard already has time off are skipped.</p>
+          {(() => {
+            const emp = employees.find(e => e.id === parseInt(shiftForm.empId));
+            const loc = locations.find(l => l.name === shiftForm.location);
+            return emp && loc?.armed && !emp.armed && <p className="text-sm text-red-300">⚠ This post needs an armed guard and {emp.name} is not armed.</p>;
+          })()}
+          <button onClick={createShifts} className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium">Create Shifts</button>
+          {shiftMessage && <p className="text-sm text-emerald-300">{shiftMessage}</p>}
+        </div>
+
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5">
+          <h2 className="text-lg font-semibold mb-3">Upcoming Assigned Shifts ({upcoming.length})</h2>
+          {upcoming.length === 0 ? (
+            <p className="text-sm text-zinc-500">No shifts created yet. Guards without one follow their usual post.</p>
+          ) : (
+            <div className="space-y-2 max-h-[70vh] overflow-y-auto">
+              {upcoming.map(s => (
+                <div key={s.key} className="flex items-center justify-between gap-3 bg-zinc-800/50 rounded-lg px-3 py-2 text-sm">
+                  <div>
+                    <p className="font-medium">{employees.find(e => e.id === s.empId)?.name || `Employee ${s.empId}`}</p>
+                    <p className="text-zinc-400">{formatLongDate(s.dateStr)}</p>
+                    <p className="text-zinc-400">📍 {s.location} · {s.time}</p>
+                  </div>
+                  <button onClick={() => removeShift(s.key)} className="px-3 py-2 bg-red-900/50 hover:bg-red-800 text-red-200 rounded-lg text-xs min-h-[40px]">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -1067,6 +1190,7 @@ function ScheduleManager() {
     { id: 'calendar', label: '📅 Calendar' },
     ...(isSupervisor ? [
       { id: 'requests', label: '📋 Requests', badge: pendingCount },
+      { id: 'shifts', label: '🗓️ Shifts' },
       { id: 'team', label: '👥 Team Week' },
     ] : []),
     { id: 'profile', label: '👤 Profile' },
@@ -1106,6 +1230,7 @@ function ScheduleManager() {
       <main className="max-w-7xl mx-auto px-3 md:px-4 py-4 md:py-6">
         {activeTab === 'calendar' && renderCalendar()}
         {activeTab === 'requests' && isSupervisor && renderRequests()}
+        {activeTab === 'shifts' && isSupervisor && renderShifts()}
         {activeTab === 'team' && isSupervisor && renderTeam()}
         {activeTab === 'profile' && renderProfile()}
         {activeTab === 'holidays' && renderHolidays()}
