@@ -2,7 +2,6 @@ const { useState, useEffect } = React;
 
 const initialEmployees = [
   { id: 1, name: 'Jorgensen, Colin', phone: '602-309-7937', defaultLocation: 'Supervisor Post', armed: true, role: 'supervisor' },
-  { id: 2, name: 'Zieger, Ken', phone: '720-609-1120', defaultLocation: '5025 W Baseline Rd', armed: false, role: 'guard' },
   { id: 3, name: 'De Los Reyes, Harvey', phone: '602-679-1166', defaultLocation: null, armed: true, role: 'rover' },
   { id: 4, name: 'Dimodica, David', phone: '623-703-6508', defaultLocation: '4303 W. Olive', armed: false, role: 'guard' },
   { id: 5, name: 'Gonzalez, Manuel', phone: '323-979-7544', defaultLocation: '7723 W. Thomas', armed: false, role: 'guard' },
@@ -73,7 +72,6 @@ const federalHolidays = {
 // Last name to email for easy login
 const userEmailMap = {
   jorgensen: 'jorgensen@security.com',
-  zieger: 'zieger@security.com',
   delosreyes: 'delosreyes@security.com',
   dimodica: 'dimodica@security.com',
   gonzalez: 'gonzalez@security.com',

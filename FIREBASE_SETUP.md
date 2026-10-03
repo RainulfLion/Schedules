@@ -50,7 +50,6 @@ You need to create Firebase user accounts for all employees.
 | Email | Password | Role | Name | Employee ID |
 |-------|----------|------|------|-------------|
 | supervisor@security.com | super123 | Supervisor | Colin Jorgensen | 1 |
-| ken@security.com | ken123 | Guard | Ken Zieger | 2 |
 | harvey@security.com | harvey123 | Guard | Harvey De Los Reyes | 3 |
 | david@security.com | david123 | Guard | David Dimodica | 4 |
 | manuel@security.com | manuel123 | Guard | Manuel Gonzalez | 5 |
