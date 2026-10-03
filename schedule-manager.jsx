@@ -190,6 +190,8 @@ function ScheduleManager() {
     empId: '', location: locations[0].name, start: '08:30', end: '17:30', from: '', to: '', days: [1, 2, 3, 4, 5, 6]
   });
   const [shiftMessage, setShiftMessage] = useState('');
+  const [accountForm, setAccountForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', newEmail: '' });
+  const [accountMessage, setAccountMessage] = useState(null);
   const [viewEmployeeId, setViewEmployeeId] = useState(null);
   const [draggedEmployee, setDraggedEmployee] = useState(null);
 
@@ -258,13 +260,80 @@ function ScheduleManager() {
       await auth.signInWithEmailAndPassword(email, password);
     } catch (error) {
       console.error('Login error:', error);
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        setLoginError('Invalid username or password');
+      if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-email'].includes(error.code)) {
+        setLoginError('Invalid username or password. If you changed your login email, sign in with that email.');
       } else if (error.code === 'auth/too-many-requests') {
         setLoginError('Too many failed attempts. Please try again later.');
       } else {
         setLoginError('Login failed. Please try again.');
       }
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const email = userEmailMap[username.toLowerCase()] || username;
+    if (!email.includes('@')) {
+      setLoginError('Enter your login email above, then tap "Forgot password?" again.');
+      return;
+    }
+    try {
+      await auth.sendPasswordResetEmail(email);
+    } catch (error) {
+      console.error('Password reset error:', error);
+    }
+    setLoginError(`If ${email} is a real inbox with an account, a reset link is on its way. Otherwise ask your supervisor.`);
+  };
+
+  const accountErrorMessage = (error) => ({
+    'auth/wrong-password': 'Your current password is incorrect.',
+    'auth/invalid-credential': 'Your current password is incorrect.',
+    'auth/weak-password': 'The new password must be at least 6 characters.',
+    'auth/email-already-in-use': 'That email is already used by another account.',
+    'auth/invalid-email': 'That email address is not valid.',
+    'auth/too-many-requests': 'Too many attempts. Please wait a few minutes and try again.',
+  }[error.code] || 'Something went wrong. Please try again.');
+
+  // Firebase requires a fresh sign-in before changing a password or login email
+  const reauthenticate = (currentPassword) => {
+    const user = auth.currentUser;
+    const credential = firebase.auth.EmailAuthProvider.credential(user.email, currentPassword);
+    return user.reauthenticateWithCredential(credential);
+  };
+
+  const changePassword = async () => {
+    const { currentPassword, newPassword, confirmPassword } = accountForm;
+    if (newPassword.length < 6) return setAccountMessage({ ok: false, text: 'The new password must be at least 6 characters.' });
+    if (newPassword !== confirmPassword) return setAccountMessage({ ok: false, text: 'The new passwords do not match.' });
+    try {
+      await reauthenticate(currentPassword);
+      await auth.currentUser.updatePassword(newPassword);
+      setAccountForm({ ...accountForm, currentPassword: '', newPassword: '', confirmPassword: '' });
+      setAccountMessage({ ok: true, text: 'Password changed. Use the new password next time you log in.' });
+    } catch (error) {
+      console.error('Change password error:', error);
+      setAccountMessage({ ok: false, text: accountErrorMessage(error) });
+    }
+  };
+
+  const changeLoginEmail = async () => {
+    const newEmail = accountForm.newEmail.trim().toLowerCase();
+    if (!newEmail.includes('@')) return setAccountMessage({ ok: false, text: 'Enter a full email address, like name@gmail.com.' });
+    try {
+      await reauthenticate(accountForm.currentPassword);
+      try {
+        await auth.currentUser.updateEmail(newEmail);
+        setCurrentUser(prev => ({ ...prev, email: newEmail }));
+        setAccountMessage({ ok: true, text: `Your login is now ${newEmail}. Use it instead of your last name when you sign in.` });
+      } catch (error) {
+        // Projects with email protection only allow a change after the new address is verified
+        if (error.code !== 'auth/operation-not-allowed') throw error;
+        await auth.currentUser.verifyBeforeUpdateEmail(newEmail);
+        setAccountMessage({ ok: true, text: `We sent a link to ${newEmail}. Open it to finish the change, then sign in with that email.` });
+      }
+      setAccountForm({ ...accountForm, currentPassword: '', newEmail: '' });
+    } catch (error) {
+      console.error('Change email error:', error);
+      setAccountMessage({ ok: false, text: accountErrorMessage(error) });
     }
   };
 
@@ -275,6 +344,8 @@ function ScheduleManager() {
       setPassword('');
       setViewEmployeeId(null);
       setActiveTab('calendar');
+      setAccountForm({ currentPassword: '', newPassword: '', confirmPassword: '', newEmail: '' });
+      setAccountMessage(null);
     } catch (error) {
       console.error('Logout error:', error);
     }
@@ -1110,6 +1181,33 @@ function ScheduleManager() {
           </div>
         )}
 
+        {viewedId === currentUser.employeeId ? (
+          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-6 space-y-4">
+            <div>
+              <h3 className="font-semibold">Login & Password</h3>
+              <p className="text-sm text-zinc-400 mt-1">You sign in as <span className="text-zinc-200">{currentUser.email}</span></p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Current password (needed for any change)</label>
+              <input type="password" autoComplete="current-password" value={accountForm.currentPassword} onChange={e => setAccountForm({ ...accountForm, currentPassword: e.target.value })} className={inputClass} />
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div><label className="block text-sm font-medium mb-2">New password</label><input type="password" autoComplete="new-password" value={accountForm.newPassword} onChange={e => setAccountForm({ ...accountForm, newPassword: e.target.value })} className={inputClass} /></div>
+              <div><label className="block text-sm font-medium mb-2">Confirm new password</label><input type="password" autoComplete="new-password" value={accountForm.confirmPassword} onChange={e => setAccountForm({ ...accountForm, confirmPassword: e.target.value })} className={inputClass} /></div>
+            </div>
+            <button onClick={changePassword} disabled={!accountForm.currentPassword || !accountForm.newPassword} className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium disabled:opacity-40">Change Password</button>
+            <div className="border-t border-zinc-800 pt-4">
+              <label className="block text-sm font-medium mb-2">New login email</label>
+              <input type="email" value={accountForm.newEmail} onChange={e => setAccountForm({ ...accountForm, newEmail: e.target.value })} placeholder="you@example.com" className={inputClass} />
+              <p className="text-xs text-zinc-500 mt-2">Use a real email you check, so you can reset your password if you forget it. After changing it, sign in with this email instead of your last name.</p>
+            </div>
+            <button onClick={changeLoginEmail} disabled={!accountForm.currentPassword || !accountForm.newEmail} className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium disabled:opacity-40">Change Login Email</button>
+            {accountMessage && <p className={`text-sm ${accountMessage.ok ? 'text-emerald-300' : 'text-red-400'}`}>{accountMessage.text}</p>}
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500">Only {emp.name} can change their own login and password, from their Profile tab. If they forget it, they can use "Forgot password?" on the login screen once their login is a real email.</p>
+        )}
+
         <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-6">
           <h3 className="font-semibold mb-3">Upcoming Requests</h3>
           {upcoming.length === 0 ? (
@@ -1170,7 +1268,7 @@ function ScheduleManager() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">Username</label>
-              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500" placeholder="Your last name" autoFocus />
+              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500" placeholder="Last name or login email" autoFocus />
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Password</label>
@@ -1178,6 +1276,7 @@ function ScheduleManager() {
             </div>
             {loginError && <div className="text-red-400 text-sm">{loginError}</div>}
             <button type="submit" className="w-full px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg text-sm font-medium">Login</button>
+            <button type="button" onClick={handleForgotPassword} className="w-full text-sm text-zinc-400 hover:text-zinc-200">Forgot password?</button>
           </form>
         </div>
       </div>
