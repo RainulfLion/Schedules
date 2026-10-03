@@ -52,52 +52,7 @@ const federalHolidays = {
   ]
 };
 
-const defaultRules = [
-  { id: 1, name: 'Target Weekly Hours', value: '40', type: 'number', description: 'Target hours per employee' },
-  { id: 2, name: 'Max Weekly Hours', value: '40', type: 'number', description: 'Max before overtime' },
-  { id: 3, name: 'Max Vacation Same Day', value: '2', type: 'number', description: 'Max employees on vacation same day' },
-];
-
-// User email mapping for easy login (last name to email)
-const userEmailMap = {
-  jorgensen: 'jorgensen@security.com',
-  zieger: 'zieger@security.com',
-  delosreyes: 'delosreyes@security.com',
-  dimodica: 'dimodica@security.com',
-  gonzalez: 'gonzalez@security.com',
-  goodlow: 'goodlow@security.com',
-  romero: 'romero@security.com',
-  valerio: 'valerio@security.com'
-};
-
-const getWeekDates = (startDate) => {
-  const dates = [];
-  const start = new Date(startDate);
-  start.setHours(12, 0, 0, 0);
-  const dayOfWeek = start.getDay();
-  const friday = new Date(start);
-  friday.setDate(start.getDate() - ((dayOfWeek + 2) % 7));
-  for (let i = 0; i < 7; i++) {
-    const date = new Date(friday);
-    date.setDate(friday.getDate() + i);
-    dates.push(date);
-  }
-  return dates;
-};
-
-// Get the Friday of the current week
-const getCurrentWeekFriday = () => {
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-  const dayOfWeek = today.getDay();
-  const friday = new Date(today);
-  friday.setDate(today.getDate() - ((dayOfWeek + 2) % 7));
-  return friday;
-};
-
-const formatDate = (date) => date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
 const formatDateISO = (date) => date.toISOString().split('T')[0];
-const getDayName = (date) => date.toLocaleDateString('en-US', { weekday: 'short' });
 const isSunday = (date) => date.getDay() === 0;
 const isSaturday = (date) => date.getDay() === 6;
 const isHoliday = (date) => {
@@ -107,7 +62,6 @@ const isHoliday = (date) => {
 };
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 
-// Check if a certification date is missing, expired, or expiring within 2 months
 function isCertExpiring(dateStr) {
   if (!dateStr) return true;
   const today = new Date();
@@ -127,37 +81,30 @@ function ScheduleManager() {
   const [authLoading, setAuthLoading] = useState(true);
 
   const [employees, setEmployees] = useState(initialEmployees);
-  const [rules, setRules] = useState(defaultRules);
-  const [weekStart, setWeekStart] = useState(getCurrentWeekFriday());
-  const [schedule, setSchedule] = useState({});
-  const [activeTab, setActiveTab] = useState('schedule');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiSuggestions, setAiSuggestions] = useState(null);
-  const [showAiPanel, setShowAiPanel] = useState(false);
-  const [selectedEmployee, setSelectedEmployee] = useState(null);
-  const [vacationRequests, setVacationRequests] = useState({});
   const [calendarMonth, setCalendarMonth] = useState(new Date());
-
-  // Manual schedule overrides (for drag-and-drop)
+  const [schedule, setSchedule] = useState({});
+  const [activeTab, setActiveTab] = useState('calendar');
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [vacationRequests, setVacationRequests] = useState({});
+  const [workRequests, setWorkRequests] = useState({});
   const [manualOverrides, setManualOverrides] = useState({});
 
-  const [draggedEmployee, setDraggedEmployee] = useState(null);
-
-  // Employee editing state
-  const [editingEmployee, setEditingEmployee] = useState(null);
-  const [editedEmployeeData, setEditedEmployeeData] = useState({});
-
-  // Track if data is being loaded from Firestore to avoid re-saving
+  // Track if data is being loaded from Firestore
   const isLoadingVacationRequests = React.useRef(false);
+  const isLoadingWorkRequests = React.useRef(false);
   const isLoadingManualOverrides = React.useRef(false);
   const hasInitializedVacations = React.useRef(false);
+  const hasInitializedWorkRequests = React.useRef(false);
   const hasInitializedOverrides = React.useRef(false);
+
+  // Profile editing
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileData, setProfileData] = useState({});
 
   // Firebase Authentication listener
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (user) {
-        // User is signed in, fetch their profile
         const profile = await FirebaseHelpers.getUserProfile(user.uid);
         if (profile) {
           setCurrentUser({
@@ -169,19 +116,16 @@ function ScheduleManager() {
           });
         }
       } else {
-        // User is signed out
         setCurrentUser(null);
       }
       setAuthLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  // Load employee profile fields from Firestore and merge into employees state
+  // Load employee profiles
   useEffect(() => {
     if (!currentUser) return;
-
     db.collection('employees').get().then((snapshot) => {
       if (snapshot.empty) return;
       const profileMap = {};
@@ -206,83 +150,96 @@ function ScheduleManager() {
     }).catch(err => console.error('Error loading employee profiles:', err));
   }, [currentUser]);
 
-  // Load vacation requests from Firestore with real-time sync
+  // Load vacation requests
   useEffect(() => {
     if (!currentUser) return;
-
     const unsubscribe = FirebaseHelpers.onVacationRequestsChange((requests) => {
       isLoadingVacationRequests.current = true;
       setVacationRequests(requests);
       hasInitializedVacations.current = true;
-      // Reset the flag after state update
-      setTimeout(() => {
-        isLoadingVacationRequests.current = false;
-      }, 100);
+      setTimeout(() => { isLoadingVacationRequests.current = false; }, 100);
     });
-
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Load manual overrides from Firestore with real-time sync
+  // Load work requests
   useEffect(() => {
     if (!currentUser) return;
+    const unsubscribe = db.collection('workRequests').onSnapshot(
+      snapshot => {
+        isLoadingWorkRequests.current = true;
+        const requests = {};
+        snapshot.forEach(doc => {
+          requests[doc.id] = doc.data();
+        });
+        setWorkRequests(requests);
+        hasInitializedWorkRequests.current = true;
+        setTimeout(() => { isLoadingWorkRequests.current = false; }, 100);
+      },
+      error => {
+        console.error('Error listening to work requests:', error);
+        setWorkRequests({});
+      }
+    );
+    return () => unsubscribe();
+  }, [currentUser]);
 
+  // Load manual overrides
+  useEffect(() => {
+    if (!currentUser) return;
     const unsubscribe = FirebaseHelpers.onManualOverridesChange((overrides) => {
       isLoadingManualOverrides.current = true;
       setManualOverrides(overrides);
       hasInitializedOverrides.current = true;
-      // Reset the flag after state update
-      setTimeout(() => {
-        isLoadingManualOverrides.current = false;
-      }, 100);
+      setTimeout(() => { isLoadingManualOverrides.current = false; }, 100);
     });
-
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Save vacation requests to Firestore (only when locally modified)
+  // Save vacation requests
   useEffect(() => {
-    if (!currentUser) return;
-    if (!hasInitializedVacations.current) return;
-    if (isLoadingVacationRequests.current) return;
-
+    if (!currentUser || !hasInitializedVacations.current || isLoadingVacationRequests.current) return;
     const timeoutId = setTimeout(() => {
-      FirebaseHelpers.saveVacationRequests(vacationRequests)
-        .catch(error => {
-          console.error('Error saving vacation requests:', error);
-        });
+      FirebaseHelpers.saveVacationRequests(vacationRequests).catch(error => {
+        console.error('Error saving vacation requests:', error);
+      });
     }, 500);
-
     return () => clearTimeout(timeoutId);
   }, [vacationRequests, currentUser]);
 
-  // Save manual overrides to Firestore (only when locally modified)
+  // Save work requests
   useEffect(() => {
-    if (!currentUser) return;
-    if (!hasInitializedOverrides.current) return;
-    if (isLoadingManualOverrides.current) return;
-
+    if (!currentUser || !hasInitializedWorkRequests.current || isLoadingWorkRequests.current) return;
     const timeoutId = setTimeout(() => {
-      FirebaseHelpers.saveManualOverrides(manualOverrides)
-        .catch(error => {
-          console.error('Error saving manual overrides:', error);
-        });
+      const batch = db.batch();
+      Object.entries(workRequests).forEach(([empId, dates]) => {
+        const ref = db.collection('workRequests').doc(empId);
+        if (dates && Object.keys(dates).length > 0) {
+          batch.set(ref, dates);
+        }
+      });
+      batch.commit().catch(error => console.error('Error saving work requests:', error));
     }, 500);
+    return () => clearTimeout(timeoutId);
+  }, [workRequests, currentUser]);
 
+  // Save manual overrides
+  useEffect(() => {
+    if (!currentUser || !hasInitializedOverrides.current || isLoadingManualOverrides.current) return;
+    const timeoutId = setTimeout(() => {
+      FirebaseHelpers.saveManualOverrides(manualOverrides).catch(error => {
+        console.error('Error saving manual overrides:', error);
+      });
+    }, 500);
     return () => clearTimeout(timeoutId);
   }, [manualOverrides, currentUser]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoginError('');
-
     try {
-      // Convert username to email if needed
-      const email = userEmailMap[username.toLowerCase()] || username;
-
-      // Sign in with Firebase
+      const email = username.includes('@') ? username : `${username.toLowerCase()}@security.com`;
       await auth.signInWithEmailAndPassword(email, password);
-      // User state will be updated by onAuthStateChanged listener
     } catch (error) {
       console.error('Login error:', error);
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
@@ -305,25 +262,30 @@ function ScheduleManager() {
     }
   };
 
-  const weekDates = getWeekDates(weekStart);
-
-  // Build schedule targeting ~40 hours per person
+  // Build schedule
   useEffect(() => {
     const newSchedule = {};
     employees.forEach(emp => { newSchedule[emp.id] = {}; });
 
+    // Get all days in the current month + next 2 months for better planning
+    const startDate = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const endDate = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 3, 0);
+
+    const allDates = [];
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      allDates.push(new Date(d));
+    }
+
     const bankGuards = employees.filter(emp => emp.role === 'guard');
     const rover = employees.find(emp => emp.role === 'rover');
 
-    // Build each day's schedule
-    weekDates.forEach(date => {
+    allDates.forEach(date => {
       const dateKey = formatDateISO(date);
       const holiday = isHoliday(date);
       const sunday = isSunday(date);
       const saturday = isSaturday(date);
       const hours = getHoursForDay(date);
 
-      // First pass: identify who's available and who needs coverage
       const needsCoverage = [];
       const availableGuards = [];
 
@@ -336,21 +298,18 @@ function ScheduleManager() {
         }
       });
 
-      // Limit rotation days off - only give day off if rover can cover
       let rotationDayOff = null;
       if (!sunday && !saturday && !holiday && needsCoverage.length === 0 && availableGuards.length > 0) {
-        // Rotate through guards for days off
         const dayIndex = Math.floor((date.getTime() - new Date('2026-01-01').getTime()) / (1000 * 60 * 60 * 24));
         rotationDayOff = availableGuards[dayIndex % availableGuards.length];
         needsCoverage.push({ guard: rotationDayOff, reason: 'rotation' });
       }
 
-      // Assign rover to first post that needs coverage
       const coveragePost = needsCoverage.length > 0 ? needsCoverage[0].guard.defaultLocation : null;
 
-      // Now assign everyone
       employees.forEach(emp => {
         const vacReq = vacationRequests[emp.id]?.[dateKey];
+        const workReq = workRequests[emp.id]?.[dateKey];
 
         if (sunday) {
           newSchedule[emp.id][dateKey] = { status: 'closed', location: '', hours: 0 };
@@ -358,6 +317,8 @@ function ScheduleManager() {
           newSchedule[emp.id][dateKey] = { status: 'holiday', location: '', hours: 0, holidayName: holiday.name };
         } else if (vacReq?.status === 'approved') {
           newSchedule[emp.id][dateKey] = { status: 'vacation', location: '', hours: 0 };
+        } else if (workReq?.status === 'approved') {
+          newSchedule[emp.id][dateKey] = { status: 'work', location: workReq.location, hours, time: saturday ? '0830-1430' : '0830-1730' };
         } else if (emp.role === 'supervisor') {
           newSchedule[emp.id][dateKey] = { status: 'work', location: 'Supervisor Post', hours, time: saturday ? '0830-1430' : '0830-1730' };
         } else if (emp.role === 'rover') {
@@ -367,7 +328,6 @@ function ScheduleManager() {
             newSchedule[emp.id][dateKey] = { status: 'oncall', location: 'On Call', hours: 0 };
           }
         } else {
-          // Regular guard
           if (rotationDayOff?.id === emp.id) {
             newSchedule[emp.id][dateKey] = { status: 'nowork', location: '', hours: 0 };
           } else {
@@ -377,7 +337,7 @@ function ScheduleManager() {
       });
     });
 
-    // Apply manual overrides from drag-and-drop
+    // Apply manual overrides
     Object.keys(manualOverrides).forEach(key => {
       const [empIdStr, dateKey] = key.split('_');
       const empId = parseInt(empIdStr);
@@ -387,126 +347,19 @@ function ScheduleManager() {
     });
 
     setSchedule(newSchedule);
-  }, [weekStart, vacationRequests, manualOverrides]);
+  }, [calendarMonth, vacationRequests, workRequests, manualOverrides]);
 
-  // Drag and drop handlers
-  const handleDragStart = (e, employee) => {
-    if (currentUser?.role !== 'supervisor') return;
-    setDraggedEmployee(employee);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e) => {
-    if (currentUser?.role !== 'supervisor') return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDrop = (e, location, dateKey) => {
-    e.preventDefault();
-    if (!draggedEmployee || currentUser?.role !== 'supervisor') return;
-
-    const date = new Date(dateKey + 'T12:00:00');
-    const hours = getHoursForDay(date);
-    const saturday = isSaturday(date);
-
-    const newOverrides = { ...manualOverrides };
-
-    // Find who was covering this location before
-    const previouslyCovering = employees.filter(emp => {
-      const empSchedule = schedule[emp.id]?.[dateKey];
-      if (!empSchedule || empSchedule.status !== 'work') return false;
-      return empSchedule.location === location;
-    });
-
-    // Clear the dragged employee from any other location on this date
-    employees.forEach(emp => {
-      const overrideKey = `${draggedEmployee.id}_${dateKey}`;
-      if (emp.id === draggedEmployee.id) {
-        // Assign dragged employee to new location
-        newOverrides[overrideKey] = {
-          status: 'work',
-          location: location,
-          hours,
-          time: saturday ? '0830-1430' : '0830-1730',
-          manual: true
-        };
-      }
-    });
-
-    // Set previously covering employees to nowork (they've been replaced)
-    previouslyCovering.forEach(emp => {
-      if (emp.id !== draggedEmployee.id) {
-        const prevOverrideKey = `${emp.id}_${dateKey}`;
-        newOverrides[prevOverrideKey] = {
-          status: 'nowork',
-          location: '',
-          hours: 0,
-          manual: true
-        };
-      }
-    });
-
-    setManualOverrides(newOverrides);
-    setDraggedEmployee(null);
-  };
-
-  const cycleStatus = (empId, dateKey) => {
-    const current = schedule[empId]?.[dateKey]?.status || 'work';
-    if (current === 'closed') return;
-    const idx = STATUS_OPTIONS.indexOf(current);
-    let nextStatus = STATUS_OPTIONS[(idx + 1) % STATUS_OPTIONS.length];
-    if (nextStatus === 'closed') nextStatus = 'work';
-
-    const date = new Date(dateKey + 'T12:00:00');
-    const hours = nextStatus === 'work' ? getHoursForDay(date) : 0;
-    const saturday = isSaturday(date);
-    const currentSchedule = schedule[empId]?.[dateKey] || {};
-
-    // Create the updated schedule entry
-    const updatedEntry = {
-      status: nextStatus,
-      hours,
-      location: nextStatus === 'work' ? currentSchedule.location || '' : '',
-      time: nextStatus === 'work' ? (currentSchedule.time || (saturday ? '0830-1430' : '0830-1730')) : '',
-      manual: true
-    };
-
-    // Update local schedule state for immediate UI update
-    setSchedule(prev => ({
+  const requestTimeOff = (empId, dateStr) => {
+    setVacationRequests(prev => ({
       ...prev,
-      [empId]: { ...prev[empId], [dateKey]: updatedEntry }
-    }));
-
-    // Save to manual overrides (which syncs to Firestore)
-    const overrideKey = `${empId}_${dateKey}`;
-    setManualOverrides(prev => ({
-      ...prev,
-      [overrideKey]: updatedEntry
+      [empId]: {
+        ...prev[empId],
+        [dateStr]: { status: 'pending', requestedAt: new Date().toISOString() }
+      }
     }));
   };
 
-  const calculateWeeklyHours = (empId) => {
-    if (!schedule[empId]) return 0;
-    return Object.values(schedule[empId]).reduce((sum, day) => sum + (day.hours || 0), 0);
-  };
-
-  const calculateOvertime = (empId) => {
-    const total = calculateWeeklyHours(empId);
-    const threshold = parseInt(rules.find(r => r.name === 'Max Weekly Hours')?.value || 40);
-    return Math.max(0, total - threshold);
-  };
-
-  const requestVacation = (empId, dateStr) => setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'pending' } } }));
-  const approveVacation = (empId, dateStr) => {
-    if (currentUser?.role !== 'supervisor') return;
-    setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'approved' } } }));
-  };
-  const denyVacation = (empId, dateStr) => {
-    if (currentUser?.role !== 'supervisor') return;
-    setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'denied' } } }));
-  };
-  const cancelVacation = (empId, dateStr) => {
+  const cancelTimeOffRequest = (empId, dateStr) => {
     setVacationRequests(prev => {
       const n = { ...prev };
       if (n[empId]) delete n[empId][dateStr];
@@ -514,259 +367,658 @@ function ScheduleManager() {
     });
   };
 
-  // Check if a date is missing or within 2 months of today
-  const isDateFlagged = (dateStr) => {
-    if (!dateStr) return true;
-    const expDate = new Date(dateStr);
-    const now = new Date();
-    const twoMonths = new Date(now.getFullYear(), now.getMonth() + 2, now.getDate());
-    return expDate <= twoMonths;
+  const requestWork = (empId, dateStr, location) => {
+    setWorkRequests(prev => ({
+      ...prev,
+      [empId]: {
+        ...prev[empId],
+        [dateStr]: { status: 'pending', location, requestedAt: new Date().toISOString() }
+      }
+    }));
   };
 
-  // Employee profile editing
-  const startEditingEmployee = (emp) => {
-    setEditingEmployee(emp.id);
-    setEditedEmployeeData({
-      name: emp.name,
-      phone: emp.phone,
-      defaultLocation: emp.defaultLocation || '',
-      armed: emp.armed || false,
-      guardCardExpiration: emp.guardCardExpiration || '',
-      cprCardExpiration: emp.cprCardExpiration || '',
-      shirtSize: emp.shirtSize || '',
-      pantsSize: emp.pantsSize || ''
+  const cancelWorkRequest = (empId, dateStr) => {
+    setWorkRequests(prev => {
+      const n = { ...prev };
+      if (n[empId]) delete n[empId][dateStr];
+      return n;
     });
   };
 
-  const saveEmployeeChanges = async () => {
-    if (!editingEmployee) return;
+  const approveTimeOff = (empId, dateStr) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setVacationRequests(prev => ({
+      ...prev,
+      [empId]: {
+        ...prev[empId],
+        [dateStr]: { ...prev[empId][dateStr], status: 'approved' }
+      }
+    }));
+  };
 
-    // Update local employees state
-    const updatedEmployees = initialEmployees.map(emp =>
-      emp.id === editingEmployee
-        ? { ...emp, ...editedEmployeeData }
-        : emp
-    );
+  const denyTimeOff = (empId, dateStr) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setVacationRequests(prev => {
+      const n = { ...prev };
+      if (n[empId]) delete n[empId][dateStr];
+      return n;
+    });
+  };
 
-    // Update Firestore - save to employees collection keyed by employee ID
+  const approveWorkRequest = (empId, dateStr) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setWorkRequests(prev => ({
+      ...prev,
+      [empId]: {
+        ...prev[empId],
+        [dateStr]: { ...prev[empId][dateStr], status: 'approved' }
+      }
+    }));
+  };
+
+  const denyWorkRequest = (empId, dateStr) => {
+    if (currentUser?.role !== 'supervisor') return;
+    setWorkRequests(prev => {
+      const n = { ...prev };
+      if (n[empId]) delete n[empId][dateStr];
+      return n;
+    });
+  };
+
+  const saveProfile = async () => {
+    if (!currentUser) return;
     try {
-      await db.collection('employees').doc(String(editingEmployee)).set({
-        name: editedEmployeeData.name,
-        phone: editedEmployeeData.phone,
-        defaultLocation: editedEmployeeData.defaultLocation,
-        armed: editedEmployeeData.armed,
-        guardCardExpiration: editedEmployeeData.guardCardExpiration,
-        cprCardExpiration: editedEmployeeData.cprCardExpiration,
-        shirtSize: editedEmployeeData.shirtSize,
-        pantsSize: editedEmployeeData.pantsSize
+      await db.collection('employees').doc(String(currentUser.employeeId)).set({
+        name: profileData.name,
+        phone: profileData.phone,
+        defaultLocation: profileData.defaultLocation,
+        armed: profileData.armed,
+        guardCardExpiration: profileData.guardCardExpiration,
+        cprCardExpiration: profileData.cprCardExpiration,
+        shirtSize: profileData.shirtSize,
+        pantsSize: profileData.pantsSize
       }, { merge: true });
 
       setEmployees(prev => prev.map(emp =>
-        emp.id === editingEmployee ? { ...emp, ...editedEmployeeData } : emp
+        emp.id === currentUser.employeeId ? { ...emp, ...profileData } : emp
       ));
 
-      setEditingEmployee(null);
-      setEditedEmployeeData({});
+      setEditingProfile(false);
+      alert('Profile updated successfully!');
     } catch (error) {
-      console.error('Error saving employee changes:', error);
-      alert('Failed to save changes. Please try again.');
+      console.error('Error saving profile:', error);
+      alert('Failed to save profile. Please try again.');
     }
   };
 
-  const cancelEditingEmployee = () => {
-    setEditingEmployee(null);
-    setEditedEmployeeData({});
-  };
-
-  const VacationCalendar = ({ employeeId }) => {
-    const year = calendarMonth.getFullYear(), month = calendarMonth.getMonth();
+  const CalendarView = () => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const days = [];
+
     for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
     for (let d = 1; d <= lastDay.getDate(); d++) days.push(new Date(year, month, d));
 
+    const currentEmployee = employees.find(e => e.id === currentUser.employeeId);
+    const isPast = (date) => date < new Date(new Date().setHours(0, 0, 0, 0));
+
     return (
-      <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-4">
-        <div className="flex items-center justify-between mb-4">
-          <button onClick={() => setCalendarMonth(new Date(year, month - 1))} className="p-2 hover:bg-zinc-800 rounded-lg">←</button>
-          <h3 className="font-medium">{calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
-          <button onClick={() => setCalendarMonth(new Date(year, month + 1))} className="p-2 hover:bg-zinc-800 rounded-lg">→</button>
+      <div className="space-y-4">
+        {/* Month Navigation */}
+        <div className="flex items-center justify-between bg-zinc-900/50 rounded-xl border border-zinc-800 p-4">
+          <button
+            onClick={() => setCalendarMonth(new Date(year, month - 1))}
+            className="p-2 hover:bg-zinc-800 rounded-lg text-lg"
+          >
+            ←
+          </button>
+          <h2 className="text-xl font-semibold">
+            {calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          </h2>
+          <button
+            onClick={() => setCalendarMonth(new Date(year, month + 1))}
+            className="p-2 hover:bg-zinc-800 rounded-lg text-lg"
+          >
+            →
+          </button>
         </div>
-        <div className="grid grid-cols-7 gap-1 text-xs">
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="text-center text-zinc-500 py-2">{d}</div>)}
-          {days.map((day, idx) => {
-            if (!day) return <div key={idx} />;
-            const dateStr = formatDateISO(day);
-            const holiday = isHoliday(day);
-            const sunday = isSunday(day);
-            const vacReq = vacationRequests[employeeId]?.[dateStr];
-            const isPast = day < new Date(new Date().setHours(0,0,0,0));
-            
-            let bg = 'hover:bg-zinc-800', text = 'text-zinc-300';
-            if (sunday) { bg = 'bg-zinc-700/30'; text = 'text-zinc-500'; }
-            else if (holiday) { bg = 'bg-blue-900/40'; text = 'text-blue-300'; }
-            else if (vacReq?.status === 'approved') { bg = 'bg-emerald-900/40'; text = 'text-emerald-300'; }
-            else if (vacReq?.status === 'pending') { bg = 'bg-amber-900/40'; text = 'text-amber-300'; }
-            else if (isPast) { text = 'text-zinc-600'; }
-            
-            return (
-              <button key={idx} onClick={() => {
-                if (isPast || holiday || sunday) return;
-                if (vacReq?.status === 'pending') cancelVacation(employeeId, dateStr);
-                else if (!vacReq) requestVacation(employeeId, dateStr);
-              }} className={`p-2 rounded-lg ${bg} ${text}`}>{day.getDate()}</button>
-            );
-          })}
+
+        {/* Calendar Grid */}
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-4">
+          <div className="grid grid-cols-7 gap-2 mb-2">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+              <div key={d} className="text-center text-zinc-500 font-medium text-sm py-2">{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {days.map((day, idx) => {
+              if (!day) return <div key={idx} className="aspect-square" />;
+
+              const dateStr = formatDateISO(day);
+              const holiday = isHoliday(day);
+              const sunday = isSunday(day);
+              const cell = schedule[currentUser.employeeId]?.[dateStr] || {};
+              const vacReq = vacationRequests[currentUser.employeeId]?.[dateStr];
+              const workReq = workRequests[currentUser.employeeId]?.[dateStr];
+              const past = isPast(day);
+              const isToday = formatDateISO(new Date()) === dateStr;
+
+              let bg = 'bg-zinc-800 hover:bg-zinc-700';
+              let text = 'text-zinc-300';
+              let badge = null;
+
+              if (isToday) {
+                bg = 'bg-emerald-900/40 ring-2 ring-emerald-500';
+                text = 'text-emerald-300';
+              } else if (sunday) {
+                bg = 'bg-zinc-700/30';
+                text = 'text-zinc-500';
+              } else if (holiday) {
+                bg = 'bg-blue-900/40';
+                text = 'text-blue-300';
+                badge = '🎉';
+              } else if (cell.status === 'work') {
+                bg = 'bg-emerald-900/40';
+                text = 'text-emerald-300';
+                badge = '💼';
+              } else if (cell.status === 'vacation' || vacReq?.status === 'approved') {
+                bg = 'bg-amber-900/40';
+                text = 'text-amber-300';
+                badge = '🏖️';
+              } else if (vacReq?.status === 'pending') {
+                bg = 'bg-amber-900/20 border-2 border-amber-500 border-dashed';
+                text = 'text-amber-300';
+                badge = '⏳';
+              } else if (workReq?.status === 'pending') {
+                bg = 'bg-cyan-900/20 border-2 border-cyan-500 border-dashed';
+                text = 'text-cyan-300';
+                badge = '📝';
+              } else if (workReq?.status === 'approved') {
+                bg = 'bg-cyan-900/40';
+                text = 'text-cyan-300';
+                badge = '✅';
+              } else if (cell.status === 'nowork') {
+                bg = 'bg-zinc-700/40';
+                text = 'text-zinc-400';
+                badge = '🏠';
+              }
+
+              if (past) {
+                text = 'text-zinc-600';
+              }
+
+              return (
+                <button
+                  key={idx}
+                  onClick={() => !past && setSelectedDate(day)}
+                  className={`aspect-square rounded-lg ${bg} ${text} p-2 text-left cursor-pointer transition-all relative`}
+                  disabled={past}
+                >
+                  <div className="text-lg font-medium">{day.getDate()}</div>
+                  {badge && <div className="text-xl absolute top-1 right-1">{badge}</div>}
+                  {cell.location && !sunday && !holiday && (
+                    <div className="text-[10px] mt-1 truncate opacity-70">{cell.location}</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <div className="mt-4 flex gap-2 text-xs text-zinc-500">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-900/40"></span> Pending</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-900/40"></span> Approved</span>
+
+        {/* Legend */}
+        <div className="flex flex-wrap gap-3 text-xs text-zinc-500 bg-zinc-900/30 rounded-lg p-3">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-emerald-900/40"></span> Working
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-amber-900/40"></span> Time Off
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-cyan-900/40"></span> Work Request
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded border-2 border-dashed border-amber-500"></span> Pending
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-blue-900/40"></span> Holiday
+          </span>
         </div>
+
+        {/* Date Detail Modal */}
+        {selectedDate && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-zinc-900 rounded-xl border border-zinc-800 max-w-md w-full p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-xl font-semibold">
+                    {selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                  </h3>
+                  {isHoliday(selectedDate) && (
+                    <p className="text-sm text-blue-400 mt-1">🎉 {isHoliday(selectedDate).name}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedDate(null)}
+                  className="text-zinc-500 hover:text-zinc-300"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {(() => {
+                const dateStr = formatDateISO(selectedDate);
+                const cell = schedule[currentUser.employeeId]?.[dateStr] || {};
+                const vacReq = vacationRequests[currentUser.employeeId]?.[dateStr];
+                const workReq = workRequests[currentUser.employeeId]?.[dateStr];
+                const sunday = isSunday(selectedDate);
+                const holiday = isHoliday(selectedDate);
+
+                return (
+                  <div className="space-y-4">
+                    {/* Current Status */}
+                    <div className="bg-zinc-800/50 rounded-lg p-4">
+                      <p className="text-sm text-zinc-500 mb-2">Current Status</p>
+                      {sunday ? (
+                        <p className="text-zinc-400">🔒 Closed (Sunday)</p>
+                      ) : holiday ? (
+                        <p className="text-blue-400">🎉 Holiday - {holiday.name}</p>
+                      ) : cell.status === 'work' ? (
+                        <div>
+                          <p className="text-emerald-400">💼 Working</p>
+                          <p className="text-sm text-zinc-400 mt-1">Location: {cell.location}</p>
+                          <p className="text-sm text-zinc-400">Time: {cell.time}</p>
+                        </div>
+                      ) : cell.status === 'vacation' ? (
+                        <p className="text-amber-400">🏖️ Time Off (Approved)</p>
+                      ) : cell.status === 'nowork' ? (
+                        <p className="text-zinc-400">🏠 Day Off</p>
+                      ) : (
+                        <p className="text-zinc-400">No assignment</p>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    {!sunday && !holiday && (
+                      <div className="space-y-3">
+                        {/* Time Off Request */}
+                        {!vacReq && cell.status !== 'vacation' && (
+                          <button
+                            onClick={() => {
+                              requestTimeOff(currentUser.employeeId, dateStr);
+                              setSelectedDate(null);
+                            }}
+                            className="w-full px-4 py-3 bg-amber-600 hover:bg-amber-500 rounded-lg text-sm font-medium"
+                          >
+                            Request Time Off
+                          </button>
+                        )}
+
+                        {vacReq?.status === 'pending' && (
+                          <div className="bg-amber-900/20 border border-amber-800 rounded-lg p-3">
+                            <p className="text-amber-400 text-sm mb-2">⏳ Time off request pending approval</p>
+                            <button
+                              onClick={() => {
+                                cancelTimeOffRequest(currentUser.employeeId, dateStr);
+                                setSelectedDate(null);
+                              }}
+                              className="text-sm text-red-400 hover:text-red-300"
+                            >
+                              Cancel Request
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Work Request */}
+                        {!workReq && cell.status !== 'work' && !vacReq && (
+                          <div className="bg-zinc-800/50 rounded-lg p-3">
+                            <p className="text-sm text-zinc-400 mb-2">Request to work at:</p>
+                            <div className="space-y-2">
+                              {locations.filter(loc => !loc.supervisorOnly).map(loc => (
+                                <button
+                                  key={loc.name}
+                                  onClick={() => {
+                                    requestWork(currentUser.employeeId, dateStr, loc.name);
+                                    setSelectedDate(null);
+                                  }}
+                                  className="w-full px-3 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm text-left"
+                                >
+                                  {loc.name} {loc.armed && '🔫'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {workReq?.status === 'pending' && (
+                          <div className="bg-cyan-900/20 border border-cyan-800 rounded-lg p-3">
+                            <p className="text-cyan-400 text-sm mb-1">📝 Work request pending approval</p>
+                            <p className="text-sm text-zinc-400 mb-2">Location: {workReq.location}</p>
+                            <button
+                              onClick={() => {
+                                cancelWorkRequest(currentUser.employeeId, dateStr);
+                                setSelectedDate(null);
+                              }}
+                              className="text-sm text-red-400 hover:text-red-300"
+                            >
+                              Cancel Request
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
-  const PendingRequests = () => {
-    // Only show for supervisors
+  const PendingRequestsView = () => {
     if (currentUser?.role !== 'supervisor') return null;
 
-    const pending = [];
+    const pendingTimeOff = [];
+    const pendingWork = [];
+
     Object.entries(vacationRequests).forEach(([empId, dates]) => {
       Object.entries(dates).forEach(([dateStr, req]) => {
         if (req.status === 'pending') {
           const emp = employees.find(e => e.id === parseInt(empId));
-          pending.push({ empId: parseInt(empId), empName: emp?.name, dateStr });
+          pendingTimeOff.push({ empId: parseInt(empId), empName: emp?.name, dateStr, req });
         }
       });
     });
-    if (!pending.length) return null;
-    
+
+    Object.entries(workRequests).forEach(([empId, dates]) => {
+      Object.entries(dates).forEach(([dateStr, req]) => {
+        if (req.status === 'pending') {
+          const emp = employees.find(e => e.id === parseInt(empId));
+          pendingWork.push({ empId: parseInt(empId), empName: emp?.name, dateStr, req });
+        }
+      });
+    });
+
+    if (pendingTimeOff.length === 0 && pendingWork.length === 0) {
+      return (
+        <div className="text-center py-12 text-zinc-500">
+          <p className="text-lg">No pending requests</p>
+          <p className="text-sm mt-2">All requests have been processed</p>
+        </div>
+      );
+    }
+
     return (
-      <div className="mb-6 p-4 bg-amber-900/20 border border-amber-800 rounded-xl">
-        <h3 className="font-medium text-amber-300 mb-3">Pending Requests ({pending.length})</h3>
-        <div className="space-y-2">
-          {pending.map(({ empId, empName, dateStr }) => (
-            <div key={`${empId}-${dateStr}`} className="flex items-center justify-between bg-zinc-900/50 p-3 rounded-lg">
-              <div>
-                <div className="font-medium">{empName}</div>
-                <div className="text-xs text-zinc-500">{new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+      <div className="space-y-6">
+        {/* Time Off Requests */}
+        {pendingTimeOff.length > 0 && (
+          <div className="bg-amber-900/20 border border-amber-800 rounded-xl p-4">
+            <h3 className="font-medium text-amber-300 mb-4 text-lg">
+              🏖️ Time Off Requests ({pendingTimeOff.length})
+            </h3>
+            <div className="space-y-3">
+              {pendingTimeOff.map(({ empId, empName, dateStr, req }) => (
+                <div key={`${empId}-${dateStr}`} className="bg-zinc-900/50 p-4 rounded-lg">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-medium">{empName}</p>
+                      <p className="text-sm text-zinc-400 mt-1">
+                        {new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
+                          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                        })}
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Requested: {new Date(req.requestedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => approveTimeOff(empId, dateStr)}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => denyTimeOff(empId, dateStr)}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm"
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Work Requests */}
+        {pendingWork.length > 0 && (
+          <div className="bg-cyan-900/20 border border-cyan-800 rounded-xl p-4">
+            <h3 className="font-medium text-cyan-300 mb-4 text-lg">
+              💼 Work Requests ({pendingWork.length})
+            </h3>
+            <div className="space-y-3">
+              {pendingWork.map(({ empId, empName, dateStr, req }) => (
+                <div key={`${empId}-${dateStr}`} className="bg-zinc-900/50 p-4 rounded-lg">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-medium">{empName}</p>
+                      <p className="text-sm text-zinc-400 mt-1">
+                        {new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
+                          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                        })}
+                      </p>
+                      <p className="text-sm text-cyan-400 mt-1">Location: {req.location}</p>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Requested: {new Date(req.requestedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => approveWorkRequest(empId, dateStr)}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => denyWorkRequest(empId, dateStr)}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm"
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const ProfileView = () => {
+    const currentEmployee = employees.find(e => e.id === currentUser.employeeId);
+    if (!currentEmployee) return null;
+
+    if (!editingProfile) {
+      return (
+        <div className="max-w-2xl mx-auto space-y-6">
+          <div className="bg-gradient-to-br from-emerald-900/40 to-teal-900/40 rounded-xl border border-emerald-800 p-6">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center text-3xl font-bold">
+                {currentEmployee.name.split(',')[0][0]}
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => approveVacation(empId, dateStr)} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-sm">Approve</button>
-                <button onClick={() => denyVacation(empId, dateStr)} className="px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm">Deny</button>
+              <div>
+                <h2 className="text-2xl font-bold">{currentEmployee.name}</h2>
+                <p className="text-emerald-400 capitalize">{currentEmployee.role}</p>
               </div>
             </div>
-          ))}
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-zinc-500">Phone</p>
+                <p className="font-medium">{currentEmployee.phone}</p>
+              </div>
+              <div>
+                <p className="text-sm text-zinc-500">Default Location</p>
+                <p className="font-medium">{currentEmployee.defaultLocation || 'Rover'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-zinc-500">Armed Status</p>
+                <p className="font-medium">{currentEmployee.armed ? '🔫 Armed' : 'Unarmed'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-zinc-500">Guard Card Exp</p>
+                <p className={`font-medium ${isCertExpiring(currentEmployee.guardCardExpiration) ? 'text-red-400' : ''}`}>
+                  {currentEmployee.guardCardExpiration || 'Not set'}
+                  {isCertExpiring(currentEmployee.guardCardExpiration) && ' 🚩'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-zinc-500">CPR Card Exp</p>
+                <p className={`font-medium ${isCertExpiring(currentEmployee.cprCardExpiration) ? 'text-red-400' : ''}`}>
+                  {currentEmployee.cprCardExpiration || 'Not set'}
+                  {isCertExpiring(currentEmployee.cprCardExpiration) && ' 🚩'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-zinc-500">Uniform Size</p>
+                <p className="font-medium">
+                  {currentEmployee.shirtSize && `Shirt: ${currentEmployee.shirtSize}`}
+                  {currentEmployee.shirtSize && currentEmployee.pantsSize && ' | '}
+                  {currentEmployee.pantsSize && `Pants: ${currentEmployee.pantsSize}`}
+                  {!currentEmployee.shirtSize && !currentEmployee.pantsSize && 'Not set'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                setProfileData({
+                  name: currentEmployee.name,
+                  phone: currentEmployee.phone,
+                  defaultLocation: currentEmployee.defaultLocation || '',
+                  armed: currentEmployee.armed || false,
+                  guardCardExpiration: currentEmployee.guardCardExpiration || '',
+                  cprCardExpiration: currentEmployee.cprCardExpiration || '',
+                  shirtSize: currentEmployee.shirtSize || '',
+                  pantsSize: currentEmployee.pantsSize || ''
+                });
+                setEditingProfile(true);
+              }}
+              className="mt-6 w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium"
+            >
+              Edit Profile
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-6">
+          <h2 className="text-xl font-semibold mb-6">Edit Profile</h2>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Full Name</label>
+              <input
+                type="text"
+                value={profileData.name}
+                onChange={(e) => setProfileData({...profileData, name: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Phone</label>
+              <input
+                type="text"
+                value={profileData.phone}
+                onChange={(e) => setProfileData({...profileData, phone: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Guard Card Expiration</label>
+              <input
+                type="date"
+                value={profileData.guardCardExpiration}
+                onChange={(e) => setProfileData({...profileData, guardCardExpiration: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">CPR Card Expiration</label>
+              <input
+                type="date"
+                value={profileData.cprCardExpiration}
+                onChange={(e) => setProfileData({...profileData, cprCardExpiration: e.target.value})}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Shirt Size</label>
+                <select
+                  value={profileData.shirtSize}
+                  onChange={(e) => setProfileData({...profileData, shirtSize: e.target.value})}
+                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Select size</option>
+                  {['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'].map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Pants Size</label>
+                <select
+                  value={profileData.pantsSize}
+                  onChange={(e) => setProfileData({...profileData, pantsSize: e.target.value})}
+                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Select size</option>
+                  {['28x30', '30x30', '30x32', '32x30', '32x32', '32x34', '34x30', '34x32', '34x34',
+                    '36x30', '36x32', '36x34', '38x30', '38x32', '38x34', '40x30', '40x32', '40x34',
+                    '42x30', '42x32', '44x30', '44x32', '46x30', '46x32', '48x30', '48x32', '50x30', '50x32'].map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-4">
+              <button
+                onClick={saveProfile}
+                className="flex-1 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium"
+              >
+                Save Changes
+              </button>
+              <button
+                onClick={() => setEditingProfile(false)}
+                className="flex-1 px-4 py-3 bg-zinc-700 hover:bg-zinc-600 rounded-lg font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
   };
 
-  const generateImage = () => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const cw = 120, ch = 50, hh = 45, nw = 160, pad = 15;
-    canvas.width = nw + weekDates.length * cw + 120 + pad * 2;
-    canvas.height = hh + employees.length * ch + pad * 2;
-    
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Header
-    ctx.fillStyle = '#e5e5e5';
-    ctx.fillRect(pad, pad, canvas.width - pad * 2, hh);
-    ctx.fillStyle = '#1a1a1a';
-    ctx.font = 'bold 10px Arial';
-    ctx.fillText('Employee', pad + 5, pad + 28);
-    weekDates.forEach((d, i) => {
-      const x = pad + nw + i * cw;
-      ctx.fillStyle = isHoliday(d) ? '#3b82f6' : isSunday(d) ? '#9ca3af' : '#1a1a1a';
-      ctx.fillText(`${getDayName(d)} ${formatDate(d)}`, x + 5, pad + 28);
-    });
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillText('Hrs', pad + nw + weekDates.length * cw + 5, pad + 28);
-    ctx.fillText('OT', pad + nw + weekDates.length * cw + 55, pad + 28);
-    
-    // Rows
-    employees.forEach((emp, ri) => {
-      const y = pad + hh + ri * ch;
-      ctx.fillStyle = ri % 2 === 0 ? '#fafafa' : '#f0f0f0';
-      ctx.fillRect(pad, y, canvas.width - pad * 2, ch);
-      
-      ctx.fillStyle = '#1a1a1a';
-      ctx.font = 'bold 9px Arial';
-      ctx.fillText(emp.name, pad + 5, y + 20);
-      ctx.font = '8px Arial';
-      ctx.fillStyle = '#666';
-      ctx.fillText(emp.phone, pad + 5, y + 32);
-      
-      weekDates.forEach((d, ci) => {
-        const x = pad + nw + ci * cw;
-        const dk = formatDateISO(d);
-        const cell = schedule[emp.id]?.[dk] || {};
-        
-        const colors = { vacation: '#fef08a', holiday: '#bfdbfe', closed: '#d4d4d8', nowork: '#fecaca', oncall: '#e9d5ff' };
-        ctx.fillStyle = colors[cell.status] || (ri % 2 === 0 ? '#fafafa' : '#f0f0f0');
-        ctx.fillRect(x, y, cw, ch);
-        ctx.strokeStyle = '#d4d4d4';
-        ctx.strokeRect(x, y, cw, ch);
-        
-        ctx.font = '8px Arial';
-        ctx.fillStyle = '#1a1a1a';
-        
-        const labels = { vacation: 'VACATION', holiday: 'HOLIDAY', closed: 'CLOSED', nowork: 'NO WORK', oncall: 'ON CALL' };
-        if (labels[cell.status]) {
-          ctx.font = 'bold 9px Arial';
-          ctx.fillText(labels[cell.status], x + 5, y + 28);
-        } else if (cell.status === 'work') {
-          ctx.fillText(cell.time || '', x + 5, y + 16);
-          ctx.font = '7px Arial';
-          ctx.fillStyle = '#666';
-          ctx.fillText((cell.location || '').substring(0, 20), x + 5, y + 30);
-        }
-      });
-      
-      const hx = pad + nw + weekDates.length * cw;
-      ctx.fillStyle = '#1a1a1a';
-      ctx.font = 'bold 9px Arial';
-      ctx.fillText(calculateWeeklyHours(emp.id).toFixed(1), hx + 10, y + 28);
-      const ot = calculateOvertime(emp.id);
-      ctx.fillStyle = ot > 0 ? '#ea580c' : '#666';
-      ctx.fillText(ot.toFixed(1), hx + 60, y + 28);
-    });
-    
-    const link = document.createElement('a');
-    link.download = `Schedule_${formatDate(weekDates[0]).replace('/','-')}.png`;
-    link.href = canvas.toDataURL();
-    link.click();
-  };
-
-  const runAi = async () => {
-    setAiLoading(true);
-    setShowAiPanel(true);
-    const data = employees.map(e => ({ name: e.name, role: e.role, hours: calculateWeeklyHours(e.id), ot: calculateOvertime(e.id) }));
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1500, messages: [{ role: 'user', content: `Analyze schedule hours: ${JSON.stringify(data)}. Target 40hrs. Give JSON with violations, recommendations, summary.` }] })
-      });
-      const d = await res.json();
-      const t = d.content?.map(c => c.text || '').join('') || '';
-      const m = t.match(/\{[\s\S]*\}/);
-      setAiSuggestions(m ? JSON.parse(m[0]) : { summary: t });
-    } catch { setAiSuggestions({ summary: 'Error' }); }
-    setAiLoading(false);
-  };
-
-  const getStatusColor = (s) => {
-    const c = { work: 'bg-emerald-900/40 text-emerald-300', vacation: 'bg-amber-900/40 text-amber-300', holiday: 'bg-blue-900/40 text-blue-300', closed: 'bg-zinc-700/40 text-zinc-400', nowork: 'bg-red-900/40 text-red-300', oncall: 'bg-purple-900/40 text-purple-300' };
-    return c[s] || 'bg-zinc-800 text-zinc-500';
-  };
-  
-  const getStatusLabel = (s) => ({ work: 'Work', vacation: 'Vacation', holiday: 'Holiday', closed: 'Closed', nowork: 'No Work', oncall: 'On Call' }[s] || s);
-
-  // Show loading state while checking authentication
+  // Loading state
   if (authLoading) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
@@ -782,11 +1034,13 @@ function ScheduleManager() {
   // Login screen
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 w-96">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 w-full max-w-md">
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold text-lg">SM</div>
+            <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold text-lg">
+              SM
+            </div>
             <div>
               <h1 className="text-2xl font-semibold">Schedule Manager</h1>
               <p className="text-xs text-zinc-500">Security Guard Scheduler</p>
@@ -827,18 +1081,34 @@ function ScheduleManager() {
     );
   }
 
-  // Filter employees based on role
-  const displayEmployees = currentUser.role === 'supervisor' ? employees : employees.filter(e => e.id === currentUser.employeeId);
+  const pendingCount = (() => {
+    if (currentUser?.role !== 'supervisor') return 0;
+    let count = 0;
+    Object.values(vacationRequests).forEach(dates => {
+      Object.values(dates).forEach(req => {
+        if (req.status === 'pending') count++;
+      });
+    });
+    Object.values(workRequests).forEach(dates => {
+      Object.values(dates).forEach(req => {
+        if (req.status === 'pending') count++;
+      });
+    });
+    return count;
+  })();
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      
+
+      {/* Header */}
       <header className="border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-3 md:px-4 py-3 md:py-4">
-          <div className="flex items-center justify-between mb-3 md:mb-0">
-            <div className="flex items-center gap-2 md:gap-4">
-              <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold flex-shrink-0">SM</div>
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center font-bold">
+                SM
+              </div>
               <div>
                 <h1 className="text-lg md:text-xl font-semibold">Schedule Manager</h1>
                 <p className="text-xs text-zinc-500">
@@ -846,398 +1116,68 @@ function ScheduleManager() {
                 </p>
               </div>
             </div>
-            <button onClick={handleLogout} className="px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm md:hidden">Logout</button>
-          </div>
-          <div className="flex items-center justify-between gap-2 md:gap-3">
-            <div className="flex items-center gap-2 flex-1 md:flex-none">
-              <button onClick={() => setWeekStart(new Date(weekStart.getTime() - 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm min-h-[44px]">← Prev</button>
-              <div className="px-2 md:px-4 py-2 bg-zinc-800/50 rounded-lg text-xs md:text-sm min-h-[44px] flex items-center">{formatDate(weekDates[0])} - {formatDate(weekDates[6])}</div>
-              <button onClick={() => setWeekStart(new Date(weekStart.getTime() + 7*24*60*60*1000))} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm min-h-[44px]">Next →</button>
-            </div>
-            <button onClick={handleLogout} className="hidden md:block px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm min-h-[44px]">Logout</button>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-2 bg-red-900/40 hover:bg-red-900/60 text-red-300 rounded-lg text-sm"
+            >
+              Logout
+            </button>
           </div>
         </div>
       </header>
 
-      <div className="border-b border-zinc-800 bg-zinc-900/30 overflow-x-auto">
-        <div className="max-w-7xl mx-auto px-3 md:px-4 flex gap-1 min-w-max md:min-w-0">
-          {['schedule', 'employees', 'rules', 'holidays'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 md:px-5 py-3 text-sm font-medium capitalize whitespace-nowrap min-h-[44px] ${activeTab === tab ? 'text-emerald-400 border-b-2 border-emerald-400' : 'text-zinc-500 hover:text-zinc-300'}`}>{tab}</button>
-          ))}
-          <div className="flex-1 hidden md:block" />
-          <button onClick={generateImage} className="my-1.5 px-3 md:px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-xs md:text-sm mr-2 min-h-[44px] whitespace-nowrap">📷 Export</button>
-          <button onClick={runAi} disabled={aiLoading} className="my-1.5 px-3 md:px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg text-xs md:text-sm disabled:opacity-50 min-h-[44px] whitespace-nowrap">{aiLoading ? '...' : '⚡ AI'}</button>
+      {/* Navigation Tabs */}
+      <div className="border-b border-zinc-800 bg-zinc-900/30">
+        <div className="max-w-7xl mx-auto px-4 flex gap-1">
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`px-5 py-3 text-sm font-medium ${
+              activeTab === 'calendar'
+                ? 'text-emerald-400 border-b-2 border-emerald-400'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            📅 Calendar
+          </button>
+          {currentUser?.role === 'supervisor' && (
+            <button
+              onClick={() => setActiveTab('requests')}
+              className={`px-5 py-3 text-sm font-medium relative ${
+                activeTab === 'requests'
+                  ? 'text-emerald-400 border-b-2 border-emerald-400'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              📋 Requests
+              {pendingCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+          )}
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`px-5 py-3 text-sm font-medium ${
+              activeTab === 'profile'
+                ? 'text-emerald-400 border-b-2 border-emerald-400'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            👤 Profile
+          </button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-3 md:px-4 py-4 md:py-6">
-        {activeTab === 'schedule' && (
-          <div className="space-y-4">
-            <PendingRequests />
-            
-            <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/30">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/50">
-                    <th className="text-left p-3 text-zinc-400 sticky left-0 bg-zinc-900 z-10 min-w-[170px]">Employee</th>
-                    {weekDates.map(d => {
-                      const h = isHoliday(d), sun = isSunday(d);
-                      return (
-                        <th key={d.toISOString()} className="text-center p-3 min-w-[120px]">
-                          <div className={h ? 'text-blue-400' : sun ? 'text-zinc-500' : 'text-zinc-400'}>{getDayName(d)}</div>
-                          <div className="text-xs text-zinc-500">{formatDate(d)}</div>
-                          {h && <div className="text-[10px] text-blue-400">{h.name}</div>}
-                          {sun && <div className="text-[10px] text-zinc-500">Closed</div>}
-                        </th>
-                      );
-                    })}
-                    <th className="text-center p-3 text-zinc-400 min-w-[60px]">Hrs</th>
-                    <th className="text-center p-3 text-zinc-400 min-w-[50px]">OT</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayEmployees.map(emp => (
-                    <tr key={emp.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
-                      <td className="p-3 sticky left-0 bg-zinc-950 z-10">
-                        <div
-                          className={`font-medium flex items-center gap-1 ${currentUser?.role === 'supervisor' ? 'cursor-move' : ''}`}
-                          draggable={currentUser?.role === 'supervisor'}
-                          onDragStart={(e) => handleDragStart(e, emp)}
-                        >
-                          {currentUser?.role === 'supervisor' && <span className="text-zinc-600">⋮⋮</span>}
-                          {emp.name}
-                          {emp.armed && <span className="text-[10px]">🔫</span>}
-                          {emp.role === 'supervisor' && <span className="text-[10px] text-yellow-400">★</span>}
-                          {emp.role === 'rover' && <span className="text-[10px] text-cyan-400">↔</span>}
-                          {(isCertExpiring(emp.guardCardExpiration) || isCertExpiring(emp.cprCardExpiration)) && <span className="text-[10px] text-red-400" title="Certification expired or expiring soon">🚩</span>}
-                        </div>
-                        <div className="text-xs text-zinc-500">{emp.phone}</div>
-                      </td>
-                      {weekDates.map(d => {
-                        const dk = formatDateISO(d);
-                        const cell = schedule[emp.id]?.[dk] || {};
-                        return (
-                          <td key={dk} className="p-2">
-                            <div className={`rounded-lg p-2 text-xs ${getStatusColor(cell.status)} cursor-pointer hover:ring-1 hover:ring-zinc-600`} onClick={() => cycleStatus(emp.id, dk)}>
-                              <div className="font-medium mb-1">{getStatusLabel(cell.status)}</div>
-                              {cell.status === 'work' && cell.location && <div className="text-[10px] opacity-70 truncate">{cell.location}</div>}
-                              {cell.status === 'work' && <div className="text-[10px] opacity-70">{cell.time}</div>}
-                            </div>
-                          </td>
-                        );
-                      })}
-                      <td className="p-3 text-center font-medium">{calculateWeeklyHours(emp.id).toFixed(1)}</td>
-                      <td className="p-3 text-center"><span className={calculateOvertime(emp.id) > 0 ? 'text-amber-400 font-medium' : 'text-zinc-500'}>{calculateOvertime(emp.id).toFixed(1)}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
-              {[['emerald', 'Work'], ['amber', 'Vacation'], ['blue', 'Holiday'], ['red', 'No Work'], ['purple', 'On Call'], ['zinc-700', 'Closed']].map(([c, l]) => (
-                <span key={l} className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded bg-${c}-900/40`}></span> {l}</span>
-              ))}
-            </div>
-
-            {/* Coverage Grid */}
-            <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900/30 overflow-hidden">
-              <div className="p-4 border-b border-zinc-800 bg-zinc-900/50"><h3 className="font-medium">Coverage Grid</h3></div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-zinc-800">
-                      <th className="text-left p-3 text-zinc-400 min-w-[180px]">Location</th>
-                      {weekDates.map(d => <th key={d.toISOString()} className="text-center p-3 text-zinc-400 min-w-[100px]">{getDayName(d)}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {locations.map(loc => (
-                      <tr key={loc.name} className="border-b border-zinc-800/50">
-                        <td className="p-3">
-                          <span className="font-medium">{loc.name}</span>
-                          {loc.armed && <span className="ml-2 px-2 py-0.5 bg-red-900/40 text-red-300 text-[10px] rounded">ARMED</span>}
-                          {loc.supervisorOnly && <span className="ml-2 px-2 py-0.5 bg-yellow-900/40 text-yellow-300 text-[10px] rounded">SUP</span>}
-                        </td>
-                        {weekDates.map(d => {
-                          const dk = formatDateISO(d);
-                          const sun = isSunday(d), hol = isHoliday(d);
-                          
-                          if (sun || hol) return <td key={dk} className="p-2"><div className={`rounded-lg p-2 text-center text-xs ${sun ? 'bg-zinc-700/30 text-zinc-500' : 'bg-blue-900/30 text-blue-400'}`}>{sun ? 'CLOSED' : 'HOLIDAY'}</div></td>;
-                          
-                          const covering = employees.filter(e => {
-                            const s = schedule[e.id]?.[dk];
-                            if (s?.status !== 'work') return false;
-                            if (loc.supervisorOnly) return s.location?.includes('Supervisor');
-                            return s.location?.includes(loc.name);
-                          });
-                          
-                          const ok = covering.length > 0;
-                          const armed = covering.some(e => e.armed);
-                          const rover = covering.some(e => e.role === 'rover');
-                          
-                          let bg = 'bg-emerald-900/30', txt = 'text-emerald-300', warn = null;
-                          if (!ok) { bg = 'bg-red-900/30'; txt = 'text-red-300'; warn = 'NONE'; }
-                          else if (loc.armed && !armed) { bg = 'bg-red-900/30'; txt = 'text-red-300'; warn = 'NEED ARMED'; }
-                          else if (rover) { bg = 'bg-cyan-900/30'; txt = 'text-cyan-300'; }
-                          
-                          return (
-                            <td
-                              key={dk}
-                              className="p-2"
-                              onDragOver={handleDragOver}
-                              onDrop={(e) => handleDrop(e, loc.name, dk)}
-                            >
-                              <div className={`rounded-lg p-2 ${bg} ${currentUser?.role === 'supervisor' ? 'border-2 border-dashed border-transparent hover:border-emerald-500' : ''}`}>
-                                {covering.map(e => <div key={e.id} className={`text-xs ${txt}`}>{e.name.split(',')[0]} {e.role === 'rover' && '↔'}</div>)}
-                                {warn && <div className={`text-[10px] font-bold ${txt}`}>{warn}</div>}
-                                {currentUser?.role === 'supervisor' && <div className="text-[10px] text-zinc-600 mt-1">Drop here</div>}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'employees' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <h2 className="text-lg font-medium">Team</h2>
-              {displayEmployees.map(emp => {
-                const hrs = calculateWeeklyHours(emp.id);
-                const diff = hrs - 40;
-                const isEditing = editingEmployee === emp.id;
-                const canEdit = currentUser.role === 'supervisor' || currentUser.employeeId === emp.id;
-
-                return (
-                  <div key={emp.id} className={`p-4 bg-zinc-900/50 rounded-xl border ${selectedEmployee === emp.id ? 'border-emerald-500' : 'border-zinc-800 hover:border-zinc-700'}`}>
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex-1" onClick={() => !isEditing && setSelectedEmployee(emp.id)} style={{ cursor: !isEditing ? 'pointer' : 'default' }}>
-                        {isEditing ? (
-                          <div className="space-y-2">
-                            <input
-                              type="text"
-                              value={editedEmployeeData.name}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, name: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                              placeholder="Full Name"
-                            />
-                            <input
-                              type="text"
-                              value={editedEmployeeData.phone}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, phone: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                              placeholder="Phone Number"
-                            />
-                            <input
-                              type="text"
-                              value={editedEmployeeData.defaultLocation}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, defaultLocation: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                              placeholder="Default Location"
-                            />
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={editedEmployeeData.armed}
-                                onChange={(e) => setEditedEmployeeData({...editedEmployeeData, armed: e.target.checked})}
-                                className="rounded"
-                              />
-                              Armed
-                            </label>
-                            <input
-                              type="date"
-                              value={editedEmployeeData.guardCardExpiration}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, guardCardExpiration: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                              placeholder="Guard Card Expiration"
-                            />
-                            <label className="text-xs text-zinc-400">Guard Card Expiration</label>
-                            <input
-                              type="date"
-                              value={editedEmployeeData.cprCardExpiration}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, cprCardExpiration: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                              placeholder="CPR Card Expiration"
-                            />
-                            <label className="text-xs text-zinc-400">CPR Card Expiration</label>
-                            <select
-                              value={editedEmployeeData.shirtSize}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, shirtSize: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                            >
-                              <option value="">Shirt Size</option>
-                              <option value="XS">XS</option>
-                              <option value="S">S</option>
-                              <option value="M">M</option>
-                              <option value="L">L</option>
-                              <option value="XL">XL</option>
-                              <option value="2XL">2XL</option>
-                              <option value="3XL">3XL</option>
-                              <option value="4XL">4XL</option>
-                              <option value="5XL">5XL</option>
-                            </select>
-                            <select
-                              value={editedEmployeeData.pantsSize}
-                              onChange={(e) => setEditedEmployeeData({...editedEmployeeData, pantsSize: e.target.value})}
-                              className="w-full px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-sm"
-                            >
-                              <option value="">Pants Size</option>
-                              <option value="28x30">28x30</option>
-                              <option value="30x30">30x30</option>
-                              <option value="30x32">30x32</option>
-                              <option value="32x30">32x30</option>
-                              <option value="32x32">32x32</option>
-                              <option value="32x34">32x34</option>
-                              <option value="34x30">34x30</option>
-                              <option value="34x32">34x32</option>
-                              <option value="34x34">34x34</option>
-                              <option value="36x30">36x30</option>
-                              <option value="36x32">36x32</option>
-                              <option value="36x34">36x34</option>
-                              <option value="38x30">38x30</option>
-                              <option value="38x32">38x32</option>
-                              <option value="38x34">38x34</option>
-                              <option value="40x30">40x30</option>
-                              <option value="40x32">40x32</option>
-                              <option value="40x34">40x34</option>
-                              <option value="42x30">42x30</option>
-                              <option value="42x32">42x32</option>
-                              <option value="44x30">44x30</option>
-                              <option value="44x32">44x32</option>
-                              <option value="46x30">46x30</option>
-                              <option value="46x32">46x32</option>
-                              <option value="48x30">48x30</option>
-                              <option value="48x32">48x32</option>
-                              <option value="50x30">50x30</option>
-                              <option value="50x32">50x32</option>
-                            </select>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="font-medium">{emp.name} {emp.armed && '🔫'} {emp.role === 'supervisor' && '★'} {emp.role === 'rover' && '↔'}</div>
-                            <div className="text-xs text-zinc-500 mt-1">{emp.phone}</div>
-                            <div className="text-xs text-zinc-600 mt-2">{emp.defaultLocation || 'Rover'}</div>
-                            <div className="text-xs mt-1">
-                              {isDateFlagged(emp.guardCardExpiration) && <span className="text-red-500">🚩</span>}
-                              <span className={isDateFlagged(emp.guardCardExpiration) ? 'text-red-400' : 'text-zinc-500'}> Guard Card Exp: {emp.guardCardExpiration || 'Not set'}</span>
-                            </div>
-                            <div className="text-xs mt-1">
-                              {isDateFlagged(emp.cprCardExpiration) && <span className="text-red-500">🚩</span>}
-                              <span className={isDateFlagged(emp.cprCardExpiration) ? 'text-red-400' : 'text-zinc-500'}> CPR Card Exp: {emp.cprCardExpiration || 'Not set'}</span>
-                            </div>
-                            {(emp.shirtSize || emp.pantsSize) && (
-                              <div className="text-xs text-zinc-500 mt-1">
-                                {emp.shirtSize && `Shirt: ${emp.shirtSize}`}{emp.shirtSize && emp.pantsSize && ' | '}{emp.pantsSize && `Pants: ${emp.pantsSize}`}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                      <div className="text-right ml-4">
-                        <div className={`text-2xl font-bold ${Math.abs(diff) <= 2 ? 'text-emerald-400' : diff > 0 ? 'text-amber-400' : 'text-blue-400'}`}>{hrs.toFixed(1)}</div>
-                        <div className="text-xs text-zinc-500">({diff >= 0 ? '+' : ''}{diff.toFixed(1)})</div>
-                      </div>
-                    </div>
-
-                    {canEdit && (
-                      <div className="flex gap-2 mt-3">
-                        {isEditing ? (
-                          <>
-                            <button
-                              onClick={saveEmployeeChanges}
-                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-xs"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={cancelEditingEmployee}
-                              className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 rounded text-xs"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={() => startEditingEmployee(emp)}
-                            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs"
-                          >
-                            Edit Profile
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div>
-              {selectedEmployee ? (
-                <>
-                  <h2 className="text-lg font-medium mb-4">Vacation - {employees.find(e => e.id === selectedEmployee)?.name}</h2>
-                  <VacationCalendar employeeId={selectedEmployee} />
-                </>
-              ) : <div className="text-center text-zinc-500 py-20">Select employee for vacation calendar</div>}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'rules' && (
-          <div className="space-y-4">
-            {rules.map(r => (
-              <div key={r.id} className="flex items-center gap-4 p-4 bg-zinc-900/50 rounded-xl border border-zinc-800">
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{r.name}</div>
-                  <div className="text-xs text-zinc-500">{r.description}</div>
-                </div>
-                <input type={r.type} value={r.value} onChange={e => setRules(p => p.map(x => x.id === r.id ? { ...x, value: e.target.value } : x))} className="w-24 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {activeTab === 'holidays' && (
-          <div className="grid md:grid-cols-2 gap-6">
-            {[2026, 2027].map(yr => (
-              <div key={yr} className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-4">
-                <h3 className="text-lg font-medium mb-4 text-blue-400">{yr} Holidays</h3>
-                {federalHolidays[yr]?.map(h => (
-                  <div key={h.date} className="flex justify-between p-3 bg-zinc-800/50 rounded-lg mb-2">
-                    <div>
-                      <div className="font-medium text-sm">{h.name}</div>
-                      <div className="text-xs text-zinc-500">{new Date(h.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {showAiPanel && (
-          <div className="fixed inset-y-0 right-0 w-96 bg-zinc-900 border-l border-zinc-800 z-50 flex flex-col">
-            <div className="flex justify-between p-4 border-b border-zinc-800">
-              <span className="font-medium">AI Analysis</span>
-              <button onClick={() => setShowAiPanel(false)}>✕</button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              {aiLoading ? <div className="text-center py-8 text-zinc-500">Analyzing...</div> : aiSuggestions ? (
-                <>
-                  {aiSuggestions.summary && <div className="p-3 bg-zinc-800/50 rounded-lg mb-4"><div className="font-medium mb-2">Summary</div><div className="text-sm text-zinc-400">{aiSuggestions.summary}</div></div>}
-                  {aiSuggestions.violations?.map((v, i) => <div key={i} className="p-3 bg-red-900/30 rounded-lg mb-2 text-sm"><div className="font-medium text-red-300">{v.type}</div><div className="text-xs text-red-200">{v.description}</div></div>)}
-                  {aiSuggestions.recommendations?.map((r, i) => <div key={i} className="p-3 bg-emerald-900/30 rounded-lg mb-2 text-sm"><div className="font-medium text-emerald-300">{r.action}</div><div className="text-xs text-emerald-200">{r.reason}</div></div>)}
-                </>
-              ) : <div className="text-center py-8 text-zinc-500">Click AI to analyze</div>}
-            </div>
-          </div>
-        )}
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        {activeTab === 'calendar' && <CalendarView />}
+        {activeTab === 'requests' && <PendingRequestsView />}
+        {activeTab === 'profile' && <ProfileView />}
       </div>
     </div>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<ScheduleManager />);
