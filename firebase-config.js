@@ -68,32 +68,50 @@ const FirebaseHelpers = {
     return requests;
   },
 
-  // Save vacation requests
-  async saveVacationRequests(requests) {
+  // Save a {employeeId: {date: request}} map, one document per employee
+  async saveRequestsCollection(collectionName, requests) {
     const batch = db.batch();
 
-    // Get all existing documents to know which ones to delete
-    const snapshot = await db.collection('vacationRequests').get();
+    const snapshot = await db.collection(collectionName).get();
     const existingIds = new Set();
     snapshot.forEach(doc => existingIds.add(doc.id));
 
-    // Update or create documents for current requests
     Object.entries(requests).forEach(([empId, dates]) => {
-      const ref = db.collection('vacationRequests').doc(empId);
       if (dates && Object.keys(dates).length > 0) {
-        batch.set(ref, dates);
+        batch.set(db.collection(collectionName).doc(empId), dates);
         existingIds.delete(empId);
       }
     });
 
-    // Delete documents that are no longer in requests
-    existingIds.forEach(empId => {
-      if (!requests[empId] || Object.keys(requests[empId]).length === 0) {
-        batch.delete(db.collection('vacationRequests').doc(empId));
-      }
-    });
+    existingIds.forEach(empId => batch.delete(db.collection(collectionName).doc(empId)));
 
     await batch.commit();
+  },
+
+  onRequestsCollectionChange(collectionName, callback) {
+    return db.collection(collectionName).onSnapshot(
+      snapshot => {
+        const requests = {};
+        snapshot.forEach(doc => { requests[doc.id] = doc.data(); });
+        callback(requests);
+      },
+      error => {
+        console.error(`Error listening to ${collectionName}:`, error);
+        callback({});
+      }
+    );
+  },
+
+  saveVacationRequests(requests) {
+    return this.saveRequestsCollection('vacationRequests', requests);
+  },
+
+  saveWorkRequests(requests) {
+    return this.saveRequestsCollection('workRequests', requests);
+  },
+
+  onWorkRequestsChange(callback) {
+    return this.onRequestsCollectionChange('workRequests', callback);
   },
 
   // Get manual overrides
@@ -110,22 +128,8 @@ const FirebaseHelpers = {
     });
   },
 
-  // Listen to vacation requests changes
   onVacationRequestsChange(callback) {
-    return db.collection('vacationRequests').onSnapshot(
-      snapshot => {
-        const requests = {};
-        snapshot.forEach(doc => {
-          requests[doc.id] = doc.data();
-        });
-        callback(requests);
-      },
-      error => {
-        console.error('Error listening to vacation requests:', error);
-        // Still call callback with empty object on error to prevent app from breaking
-        callback({});
-      }
-    );
+    return this.onRequestsCollectionChange('vacationRequests', callback);
   },
 
   // Listen to manual overrides changes
