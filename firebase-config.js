@@ -32,7 +32,6 @@ db.enablePersistence()
 async function createInitialUsers() {
   const users = [
     { email: 'supervisor@security.com', password: 'super123', role: 'supervisor', name: 'Colin Jorgensen', employeeId: 1 },
-    { email: 'ken@security.com', password: 'ken123', role: 'guard', name: 'Ken Zieger', employeeId: 2 },
     { email: 'harvey@security.com', password: 'harvey123', role: 'guard', name: 'Harvey De Los Reyes', employeeId: 3 },
     { email: 'david@security.com', password: 'david123', role: 'guard', name: 'David Dimodica', employeeId: 4 },
     { email: 'manuel@security.com', password: 'manuel123', role: 'guard', name: 'Manuel Gonzalez', employeeId: 5 },

@@ -2,13 +2,16 @@ const { useState, useEffect } = React;
 
 const initialEmployees = [
   { id: 1, name: 'Jorgensen, Colin', phone: '602-309-7937', defaultLocation: 'Supervisor Post', armed: true, role: 'supervisor' },
-  { id: 2, name: 'Zieger, Ken', phone: '720-609-1120', defaultLocation: '5025 W Baseline Rd', armed: false, role: 'guard' },
   { id: 3, name: 'De Los Reyes, Harvey', phone: '602-679-1166', defaultLocation: null, armed: true, role: 'rover' },
   { id: 4, name: 'Dimodica, David', phone: '623-703-6508', defaultLocation: '4303 W. Olive', armed: false, role: 'guard' },
   { id: 5, name: 'Gonzalez, Manuel', phone: '323-979-7544', defaultLocation: '7723 W. Thomas', armed: false, role: 'guard' },
   { id: 6, name: 'Goodlow, Ernest', phone: '602-710-6198', defaultLocation: '5755 N 19th Ave', armed: false, role: 'guard' },
   { id: 7, name: 'Romero, Gilberto', phone: '602-733-3248', defaultLocation: '6026 S. 7th Ave', armed: false, role: 'guard' },
   { id: 8, name: 'Valerio, Kevin', phone: '623-693-1007', defaultLocation: '5401 W. Indian School', armed: true, role: 'guard' },
+  { id: 9, name: 'Blanding, Elvon', phone: '602-441-7354', defaultLocation: '5025 W Baseline Rd', armed: false, role: 'guard' },
+  { id: 10, name: 'Tucker, Dylon', phone: '317-499-5206', defaultLocation: null, armed: false, role: 'guard' },
+  { id: 11, name: 'Williams, Brandy', phone: '480-386-4097', defaultLocation: null, armed: false, role: 'guard' },
+  { id: 12, name: 'Ducar, David', phone: '303-906-1191', defaultLocation: null, armed: false, role: 'guard' },
 ];
 
 const locations = [
@@ -69,13 +72,16 @@ const federalHolidays = {
 // Last name to email for easy login
 const userEmailMap = {
   jorgensen: 'jorgensen@security.com',
-  zieger: 'zieger@security.com',
   delosreyes: 'delosreyes@security.com',
   dimodica: 'dimodica@security.com',
   gonzalez: 'gonzalez@security.com',
   goodlow: 'goodlow@security.com',
   romero: 'romero@security.com',
-  valerio: 'valerio@security.com'
+  valerio: 'valerio@security.com',
+  blanding: 'blanding@security.com',
+  tucker: 'tucker@security.com',
+  williams: 'williams@security.com',
+  ducar: 'ducar@security.com'
 };
 
 const getWeekDates = (startDate) => {
@@ -105,6 +111,13 @@ const isSaturday = (date) => date.getDay() === 6;
 const isHoliday = (date) => (federalHolidays[date.getFullYear()] || []).find(h => h.date === formatDateISO(date));
 const getHoursForDay = (date) => isSunday(date) ? 0 : isSaturday(date) ? 5.5 : 8.5;
 const shiftTime = (date) => isSaturday(date) ? '0830-1430' : '0830-1730';
+const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+// Shifts that end at or before they start run past midnight
+const shiftLength = (start, end) => {
+  const minutes = toMinutes(end) - toMinutes(start);
+  return Math.round(((minutes <= 0 ? minutes + 1440 : minutes) / 60) * 100) / 100;
+};
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const startOfToday = () => new Date(new Date().setHours(0, 0, 0, 0));
 
 function isCertExpiring(dateStr) {
@@ -173,6 +186,12 @@ function ScheduleManager() {
   const [activeTab, setActiveTab] = useState('calendar');
   const [selectedDate, setSelectedDate] = useState(null);
   const [rangeEnd, setRangeEnd] = useState('');
+  const [shiftForm, setShiftForm] = useState({
+    empId: '', location: locations[0].name, start: '08:30', end: '17:30', from: '', to: '', days: [1, 2, 3, 4, 5, 6]
+  });
+  const [shiftMessage, setShiftMessage] = useState('');
+  const [accountForm, setAccountForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '', newEmail: '' });
+  const [accountMessage, setAccountMessage] = useState(null);
   const [viewEmployeeId, setViewEmployeeId] = useState(null);
   const [draggedEmployee, setDraggedEmployee] = useState(null);
 
@@ -241,13 +260,80 @@ function ScheduleManager() {
       await auth.signInWithEmailAndPassword(email, password);
     } catch (error) {
       console.error('Login error:', error);
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        setLoginError('Invalid username or password');
+      if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-email'].includes(error.code)) {
+        setLoginError('Invalid username or password. If you changed your login email, sign in with that email.');
       } else if (error.code === 'auth/too-many-requests') {
         setLoginError('Too many failed attempts. Please try again later.');
       } else {
         setLoginError('Login failed. Please try again.');
       }
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const email = userEmailMap[username.toLowerCase()] || username;
+    if (!email.includes('@')) {
+      setLoginError('Enter your login email above, then tap "Forgot password?" again.');
+      return;
+    }
+    try {
+      await auth.sendPasswordResetEmail(email);
+    } catch (error) {
+      console.error('Password reset error:', error);
+    }
+    setLoginError(`If ${email} is a real inbox with an account, a reset link is on its way. Otherwise ask your supervisor.`);
+  };
+
+  const accountErrorMessage = (error) => ({
+    'auth/wrong-password': 'Your current password is incorrect.',
+    'auth/invalid-credential': 'Your current password is incorrect.',
+    'auth/weak-password': 'The new password must be at least 6 characters.',
+    'auth/email-already-in-use': 'That email is already used by another account.',
+    'auth/invalid-email': 'That email address is not valid.',
+    'auth/too-many-requests': 'Too many attempts. Please wait a few minutes and try again.',
+  }[error.code] || 'Something went wrong. Please try again.');
+
+  // Firebase requires a fresh sign-in before changing a password or login email
+  const reauthenticate = (currentPassword) => {
+    const user = auth.currentUser;
+    const credential = firebase.auth.EmailAuthProvider.credential(user.email, currentPassword);
+    return user.reauthenticateWithCredential(credential);
+  };
+
+  const changePassword = async () => {
+    const { currentPassword, newPassword, confirmPassword } = accountForm;
+    if (newPassword.length < 6) return setAccountMessage({ ok: false, text: 'The new password must be at least 6 characters.' });
+    if (newPassword !== confirmPassword) return setAccountMessage({ ok: false, text: 'The new passwords do not match.' });
+    try {
+      await reauthenticate(currentPassword);
+      await auth.currentUser.updatePassword(newPassword);
+      setAccountForm({ ...accountForm, currentPassword: '', newPassword: '', confirmPassword: '' });
+      setAccountMessage({ ok: true, text: 'Password changed. Use the new password next time you log in.' });
+    } catch (error) {
+      console.error('Change password error:', error);
+      setAccountMessage({ ok: false, text: accountErrorMessage(error) });
+    }
+  };
+
+  const changeLoginEmail = async () => {
+    const newEmail = accountForm.newEmail.trim().toLowerCase();
+    if (!newEmail.includes('@')) return setAccountMessage({ ok: false, text: 'Enter a full email address, like name@gmail.com.' });
+    try {
+      await reauthenticate(accountForm.currentPassword);
+      try {
+        await auth.currentUser.updateEmail(newEmail);
+        setCurrentUser(prev => ({ ...prev, email: newEmail }));
+        setAccountMessage({ ok: true, text: `Your login is now ${newEmail}. Use it instead of your last name when you sign in.` });
+      } catch (error) {
+        // Projects with email protection only allow a change after the new address is verified
+        if (error.code !== 'auth/operation-not-allowed') throw error;
+        await auth.currentUser.verifyBeforeUpdateEmail(newEmail);
+        setAccountMessage({ ok: true, text: `We sent a link to ${newEmail}. Open it to finish the change, then sign in with that email.` });
+      }
+      setAccountForm({ ...accountForm, currentPassword: '', newEmail: '' });
+    } catch (error) {
+      console.error('Change email error:', error);
+      setAccountMessage({ ok: false, text: accountErrorMessage(error) });
     }
   };
 
@@ -258,6 +344,8 @@ function ScheduleManager() {
       setPassword('');
       setViewEmployeeId(null);
       setActiveTab('calendar');
+      setAccountForm({ currentPassword: '', newPassword: '', confirmPassword: '', newEmail: '' });
+      setAccountMessage(null);
     } catch (error) {
       console.error('Logout error:', error);
     }
@@ -275,7 +363,7 @@ function ScheduleManager() {
     const rangeStart = weekDates[0] < monthStart ? new Date(weekDates[0]) : monthStart;
     const rangeEnd = weekDates[6] > monthEnd ? new Date(weekDates[6]) : monthEnd;
 
-    const bankGuards = employees.filter(emp => emp.role === 'guard');
+    const bankGuards = employees.filter(emp => emp.role === 'guard' && emp.defaultLocation);
 
     for (let date = new Date(rangeStart); date <= rangeEnd; date.setDate(date.getDate() + 1)) {
       const dateKey = formatDateISO(date);
@@ -321,6 +409,8 @@ function ScheduleManager() {
           entry = coveragePost
             ? { status: 'work', location: coveragePost, hours, time }
             : { status: 'oncall', location: 'On Call', hours: 0 };
+        } else if (!emp.defaultLocation) {
+          entry = { status: 'oncall', location: 'On Call', hours: 0 };
         } else if (rotationDayOff?.id === emp.id) {
           entry = { status: 'nowork', location: '', hours: 0 };
         } else {
@@ -590,10 +680,13 @@ function ScheduleManager() {
               const cell = schedule[viewedId]?.[dateStr] || {};
               const req = vacationRequests[viewedId]?.[dateStr];
               const past = day < today;
-              const closed = isSunday(day) || holiday;
+              const assignedShift = cell.manual && cell.status === 'work';
+              const closed = (isSunday(day) || holiday) && !assignedShift;
 
               let style, label, icon, sub = null;
-              if (isSunday(day)) {
+              if (assignedShift && !(req && req.status !== 'denied')) {
+                style = 'bg-teal-800/60 text-teal-200'; label = `Shift ${cell.time || ''}`; icon = '💼'; sub = cell.location;
+              } else if (isSunday(day)) {
                 style = 'bg-zinc-800/40 text-zinc-500'; label = 'Closed'; icon = '';
               } else if (holiday) {
                 style = 'bg-blue-900/40 text-blue-300'; label = holiday.name; icon = '🎉';
@@ -634,7 +727,8 @@ function ScheduleManager() {
           {Object.values(TIME_OFF_TYPES).map(t => <span key={t.label}>{t.icon} {t.label}</span>)}
           <span>⏳ Waiting for approval</span>
           <span>🎉 Holiday</span>
-          <span>📍 Scheduled post</span>
+          <span>💼 Assigned shift</span>
+          <span>📍 Usual post</span>
         </div>
 
         {selectedDate && renderDayModal()}
@@ -760,6 +854,114 @@ function ScheduleManager() {
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const createShifts = () => {
+    const { empId, location, start, end, from, to, days } = shiftForm;
+    if (!empId || !from || !to || to < from || days.length === 0) {
+      setShiftMessage('Pick a guard, a start and end date, and at least one weekday.');
+      return;
+    }
+    const entries = {};
+    const skipped = [];
+    for (let d = new Date(from + 'T12:00:00'); formatDateISO(d) <= to; d.setDate(d.getDate() + 1)) {
+      if (!days.includes(d.getDay())) continue;
+      const dateStr = formatDateISO(d);
+      const req = vacationRequests[empId]?.[dateStr];
+      if (req && req.status !== 'denied') { skipped.push(dateStr); continue; }
+      entries[`${empId}_${dateStr}`] = {
+        status: 'work', location, time: `${start.replace(':', '')}-${end.replace(':', '')}`,
+        hours: shiftLength(start, end), manual: true
+      };
+    }
+    const count = Object.keys(entries).length;
+    setManualOverrides(prev => ({ ...prev, ...entries }));
+    const name = employees.find(e => e.id === parseInt(empId))?.name;
+    setShiftMessage(`Created ${count} shift${count === 1 ? '' : 's'} for ${name}.` +
+      (skipped.length ? ` Skipped ${skipped.length} day${skipped.length === 1 ? '' : 's'} where they have time off.` : ''));
+  };
+
+  const removeShift = (key) => setManualOverrides(prev => {
+    const next = { ...prev };
+    delete next[key];
+    return next;
+  });
+
+  const renderShifts = () => {
+    const inputClass = 'w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500';
+    const set = (field) => (e) => setShiftForm({ ...shiftForm, [field]: e.target.value });
+    const toggleDay = (i) => setShiftForm({
+      ...shiftForm, days: shiftForm.days.includes(i) ? shiftForm.days.filter(x => x !== i) : [...shiftForm.days, i]
+    });
+    const todayStr = formatDateISO(new Date());
+
+    const upcoming = Object.entries(manualOverrides)
+      .map(([key, s]) => { const [empId, dateStr] = key.split('_'); return { key, empId: parseInt(empId), dateStr, ...s }; })
+      .filter(s => s.status === 'work' && s.dateStr >= todayStr)
+      .sort((a, b) => a.dateStr.localeCompare(b.dateStr) || a.empId - b.empId);
+
+    return (
+      <div className="grid lg:grid-cols-2 gap-6">
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 space-y-4 h-fit">
+          <h2 className="text-lg font-semibold">Create Shifts</h2>
+          <div>
+            <label className="block text-sm mb-1">Guard</label>
+            <select value={shiftForm.empId} onChange={set('empId')} className={inputClass}>
+              <option value="">Select a guard</option>
+              {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}{emp.armed ? ' (armed)' : ''}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Post</label>
+            <select value={shiftForm.location} onChange={set('location')} className={inputClass}>
+              {locations.map(loc => <option key={loc.name} value={loc.name}>{loc.name}{loc.armed ? ' (armed)' : ''}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="block text-sm mb-1">Start time</label><input type="time" value={shiftForm.start} onChange={set('start')} className={inputClass} /></div>
+            <div><label className="block text-sm mb-1">End time</label><input type="time" value={shiftForm.end} onChange={set('end')} className={inputClass} /></div>
+            <div><label className="block text-sm mb-1">From</label><input type="date" value={shiftForm.from} min={todayStr} onChange={set('from')} className={inputClass} /></div>
+            <div><label className="block text-sm mb-1">Through</label><input type="date" value={shiftForm.to} min={shiftForm.from || todayStr} onChange={set('to')} className={inputClass} /></div>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Days of the week</label>
+            <div className="flex flex-wrap gap-2">
+              {WEEKDAYS.map((d, i) => (
+                <button key={d} onClick={() => toggleDay(i)} className={`px-3 py-2 rounded-lg text-sm min-w-[52px] ${shiftForm.days.includes(i) ? 'bg-emerald-700 text-white' : 'bg-zinc-800 text-zinc-400'}`}>{d}</button>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500">{shiftLength(shiftForm.start, shiftForm.end)} hours per shift. Days the guard already has time off are skipped.</p>
+          {(() => {
+            const emp = employees.find(e => e.id === parseInt(shiftForm.empId));
+            const loc = locations.find(l => l.name === shiftForm.location);
+            return emp && loc?.armed && !emp.armed && <p className="text-sm text-red-300">⚠ This post needs an armed guard and {emp.name} is not armed.</p>;
+          })()}
+          <button onClick={createShifts} className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium">Create Shifts</button>
+          {shiftMessage && <p className="text-sm text-emerald-300">{shiftMessage}</p>}
+        </div>
+
+        <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5">
+          <h2 className="text-lg font-semibold mb-3">Upcoming Assigned Shifts ({upcoming.length})</h2>
+          {upcoming.length === 0 ? (
+            <p className="text-sm text-zinc-500">No shifts created yet. Guards without one follow their usual post.</p>
+          ) : (
+            <div className="space-y-2 max-h-[70vh] overflow-y-auto">
+              {upcoming.map(s => (
+                <div key={s.key} className="flex items-center justify-between gap-3 bg-zinc-800/50 rounded-lg px-3 py-2 text-sm">
+                  <div>
+                    <p className="font-medium">{employees.find(e => e.id === s.empId)?.name || `Employee ${s.empId}`}</p>
+                    <p className="text-zinc-400">{formatLongDate(s.dateStr)}</p>
+                    <p className="text-zinc-400">📍 {s.location} · {s.time}</p>
+                  </div>
+                  <button onClick={() => removeShift(s.key)} className="px-3 py-2 bg-red-900/50 hover:bg-red-800 text-red-200 rounded-lg text-xs min-h-[40px]">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -916,7 +1118,7 @@ function ScheduleManager() {
 
             <div className="grid md:grid-cols-2 gap-4">
               <div><p className="text-sm text-zinc-500">Phone</p><p className="font-medium">{emp.phone || 'Not set'}</p></div>
-              <div><p className="text-sm text-zinc-500">Usual Post</p><p className="font-medium">{emp.defaultLocation || 'Rover'}</p></div>
+              <div><p className="text-sm text-zinc-500">Usual Post</p><p className="font-medium">{emp.defaultLocation || (emp.role === 'rover' ? 'Rover' : 'Not assigned yet')}</p></div>
               <div><p className="text-sm text-zinc-500">Armed</p><p className="font-medium">{emp.armed ? '🔫 Yes' : 'No'}</p></div>
               <div><p className="text-sm text-zinc-500">Uniform</p><p className="font-medium">{[emp.shirtSize && `Shirt ${emp.shirtSize}`, emp.pantsSize && `Pants ${emp.pantsSize}`].filter(Boolean).join(' · ') || 'Not set'}</p></div>
               <div>
@@ -979,6 +1181,33 @@ function ScheduleManager() {
           </div>
         )}
 
+        {viewedId === currentUser.employeeId ? (
+          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-6 space-y-4">
+            <div>
+              <h3 className="font-semibold">Login & Password</h3>
+              <p className="text-sm text-zinc-400 mt-1">You sign in as <span className="text-zinc-200">{currentUser.email}</span></p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Current password (needed for any change)</label>
+              <input type="password" autoComplete="current-password" value={accountForm.currentPassword} onChange={e => setAccountForm({ ...accountForm, currentPassword: e.target.value })} className={inputClass} />
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div><label className="block text-sm font-medium mb-2">New password</label><input type="password" autoComplete="new-password" value={accountForm.newPassword} onChange={e => setAccountForm({ ...accountForm, newPassword: e.target.value })} className={inputClass} /></div>
+              <div><label className="block text-sm font-medium mb-2">Confirm new password</label><input type="password" autoComplete="new-password" value={accountForm.confirmPassword} onChange={e => setAccountForm({ ...accountForm, confirmPassword: e.target.value })} className={inputClass} /></div>
+            </div>
+            <button onClick={changePassword} disabled={!accountForm.currentPassword || !accountForm.newPassword} className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium disabled:opacity-40">Change Password</button>
+            <div className="border-t border-zinc-800 pt-4">
+              <label className="block text-sm font-medium mb-2">New login email</label>
+              <input type="email" value={accountForm.newEmail} onChange={e => setAccountForm({ ...accountForm, newEmail: e.target.value })} placeholder="you@example.com" className={inputClass} />
+              <p className="text-xs text-zinc-500 mt-2">Use a real email you check, so you can reset your password if you forget it. After changing it, sign in with this email instead of your last name.</p>
+            </div>
+            <button onClick={changeLoginEmail} disabled={!accountForm.currentPassword || !accountForm.newEmail} className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium disabled:opacity-40">Change Login Email</button>
+            {accountMessage && <p className={`text-sm ${accountMessage.ok ? 'text-emerald-300' : 'text-red-400'}`}>{accountMessage.text}</p>}
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500">Only {emp.name} can change their own login and password, from their Profile tab. If they forget it, they can use "Forgot password?" on the login screen once their login is a real email.</p>
+        )}
+
         <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-6">
           <h3 className="font-semibold mb-3">Upcoming Requests</h3>
           {upcoming.length === 0 ? (
@@ -1039,7 +1268,7 @@ function ScheduleManager() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">Username</label>
-              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500" placeholder="Your last name" autoFocus />
+              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500" placeholder="Last name or login email" autoFocus />
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Password</label>
@@ -1047,6 +1276,7 @@ function ScheduleManager() {
             </div>
             {loginError && <div className="text-red-400 text-sm">{loginError}</div>}
             <button type="submit" className="w-full px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded-lg text-sm font-medium">Login</button>
+            <button type="button" onClick={handleForgotPassword} className="w-full text-sm text-zinc-400 hover:text-zinc-200">Forgot password?</button>
           </form>
         </div>
       </div>
@@ -1059,6 +1289,7 @@ function ScheduleManager() {
     { id: 'calendar', label: '📅 Calendar' },
     ...(isSupervisor ? [
       { id: 'requests', label: '📋 Requests', badge: pendingCount },
+      { id: 'shifts', label: '🗓️ Shifts' },
       { id: 'team', label: '👥 Team Week' },
     ] : []),
     { id: 'profile', label: '👤 Profile' },
@@ -1098,6 +1329,7 @@ function ScheduleManager() {
       <main className="max-w-7xl mx-auto px-3 md:px-4 py-4 md:py-6">
         {activeTab === 'calendar' && renderCalendar()}
         {activeTab === 'requests' && isSupervisor && renderRequests()}
+        {activeTab === 'shifts' && isSupervisor && renderShifts()}
         {activeTab === 'team' && isSupervisor && renderTeam()}
         {activeTab === 'profile' && renderProfile()}
         {activeTab === 'holidays' && renderHolidays()}
