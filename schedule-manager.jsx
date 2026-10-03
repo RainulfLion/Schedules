@@ -22,6 +22,14 @@ const locations = [
 ];
 
 const STATUS_OPTIONS = ['work', 'vacation', 'holiday', 'nowork', 'oncall', 'closed'];
+
+const TIME_OFF_TYPES = {
+  off: { label: 'Day Off', icon: '🏠', button: 'bg-red-700 hover:bg-red-600', cell: 'bg-red-900/40 text-red-300', pending: 'bg-red-900/10 text-red-300 border-red-500' },
+  vacation: { label: 'Vacation', icon: '🏖️', button: 'bg-amber-600 hover:bg-amber-500', cell: 'bg-amber-900/40 text-amber-300', pending: 'bg-amber-900/10 text-amber-300 border-amber-500' },
+  sick: { label: 'Sick', icon: '🤒', button: 'bg-purple-700 hover:bg-purple-600', cell: 'bg-purple-900/40 text-purple-300', pending: 'bg-purple-900/10 text-purple-300 border-purple-500' },
+};
+// Requests saved before types existed were all vacation requests
+const requestType = (req) => (TIME_OFF_TYPES[req?.type] ? req.type : 'vacation');
 const MAX_WEEKLY_HOURS = 40;
 
 const SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'];
@@ -164,6 +172,7 @@ function ScheduleManager() {
   const [schedule, setSchedule] = useState({});
   const [activeTab, setActiveTab] = useState('calendar');
   const [selectedDate, setSelectedDate] = useState(null);
+  const [rangeEnd, setRangeEnd] = useState('');
   const [viewEmployeeId, setViewEmployeeId] = useState(null);
   const [draggedEmployee, setDraggedEmployee] = useState(null);
 
@@ -173,8 +182,6 @@ function ScheduleManager() {
   const signedIn = !!currentUser;
   const [vacationRequests, setVacationRequests] = useFirestoreSync(signedIn,
     cb => FirebaseHelpers.onVacationRequestsChange(cb), data => FirebaseHelpers.saveVacationRequests(data));
-  const [workRequests, setWorkRequests] = useFirestoreSync(signedIn,
-    cb => FirebaseHelpers.onWorkRequestsChange(cb), data => FirebaseHelpers.saveWorkRequests(data));
   const [manualOverrides, setManualOverrides] = useFirestoreSync(signedIn,
     cb => FirebaseHelpers.onManualOverridesChange(cb), data => FirebaseHelpers.saveManualOverrides(data));
 
@@ -300,7 +307,6 @@ function ScheduleManager() {
 
       employees.forEach(emp => {
         const vacReq = vacationRequests[emp.id]?.[dateKey];
-        const workReq = workRequests[emp.id]?.[dateKey];
         let entry;
 
         if (sunday) {
@@ -308,9 +314,7 @@ function ScheduleManager() {
         } else if (holiday) {
           entry = { status: 'holiday', location: '', hours: 0, holidayName: holiday.name };
         } else if (vacReq?.status === 'approved') {
-          entry = { status: 'vacation', location: '', hours: 0 };
-        } else if (workReq?.status === 'approved') {
-          entry = { status: 'work', location: workReq.location, hours, time };
+          entry = { status: 'vacation', location: '', hours: 0, timeOffType: requestType(vacReq) };
         } else if (emp.role === 'supervisor') {
           entry = { status: 'work', location: 'Supervisor Post', hours, time };
         } else if (emp.role === 'rover') {
@@ -335,27 +339,20 @@ function ScheduleManager() {
     });
 
     setSchedule(newSchedule);
-  }, [calendarMonth, weekStart, employees, vacationRequests, workRequests, manualOverrides]);
+  }, [calendarMonth, weekStart, employees, vacationRequests, manualOverrides]);
 
-  // Requests
-  const requestTimeOff = (empId, dateStr) => setVacationRequests(prev => ({
-    ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'pending', requestedAt: new Date().toISOString() } }
+  // Availability: no entry means available; an entry marks time off of a given type
+  const setTimeOff = (empId, dateStr, type) => setVacationRequests(prev => ({
+    ...prev, [empId]: { ...prev[empId], [dateStr]: { status: isSupervisor ? 'approved' : 'pending', type, requestedAt: new Date().toISOString() } }
   }));
-  const cancelTimeOffRequest = (empId, dateStr) => setVacationRequests(prev => removeRequest(prev, empId, dateStr));
+  const markAvailable = (empId, dateStr) => setVacationRequests(prev => removeRequest(prev, empId, dateStr));
 
-  const requestWork = (empId, dateStr, location) => setWorkRequests(prev => ({
-    ...prev, [empId]: { ...prev[empId], [dateStr]: { status: 'pending', location, requestedAt: new Date().toISOString() } }
-  }));
-  const cancelWorkRequest = (empId, dateStr) => setWorkRequests(prev => removeRequest(prev, empId, dateStr));
-
-  const setRequestStatus = (setter, empId, dateStr, status) => {
+  const setRequestStatus = (empId, dateStr, status) => {
     if (!isSupervisor) return;
-    setter(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { ...prev[empId][dateStr], status } } }));
+    setVacationRequests(prev => ({ ...prev, [empId]: { ...prev[empId], [dateStr]: { ...prev[empId][dateStr], status } } }));
   };
-  const approveTimeOff = (empId, dateStr) => setRequestStatus(setVacationRequests, empId, dateStr, 'approved');
-  const denyTimeOff = (empId, dateStr) => setRequestStatus(setVacationRequests, empId, dateStr, 'denied');
-  const approveWorkRequest = (empId, dateStr) => setRequestStatus(setWorkRequests, empId, dateStr, 'approved');
-  const denyWorkRequest = (empId, dateStr) => setRequestStatus(setWorkRequests, empId, dateStr, 'denied');
+  const approveTimeOff = (empId, dateStr) => setRequestStatus(empId, dateStr, 'approved');
+  const denyTimeOff = (empId, dateStr) => setRequestStatus(empId, dateStr, 'denied');
 
   // Team schedule (supervisor)
   const handleDragStart = (e, employee) => {
@@ -552,22 +549,21 @@ function ScheduleManager() {
     const todayStr = formatDateISO(new Date());
     const viewedEmployee = employees.find(e => e.id === viewedId);
     const isOwnCalendar = viewedId === currentUser.employeeId;
-    const myPendingCount = pendingList({ [viewedId]: vacationRequests[viewedId] }).length
-      + pendingList({ [viewedId]: workRequests[viewedId] }).length;
+    const myPendingCount = pendingList({ [viewedId]: vacationRequests[viewedId] }).length;
 
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">{isOwnCalendar ? 'My Schedule' : `${viewedEmployee?.name}'s Schedule`}</h2>
-            <p className="text-sm text-zinc-500">Tap any upcoming day to request a day off or ask to work.</p>
+            <h2 className="text-lg font-semibold">{isOwnCalendar ? 'My Availability' : `${viewedEmployee?.name} - Availability`}</h2>
+            <p className="text-sm text-zinc-500">Every open day starts as Available. Tap a day to mark it Day Off, Vacation or Sick.</p>
           </div>
           {renderEmployeePicker()}
         </div>
 
         {myPendingCount > 0 && (
           <div className="bg-amber-900/20 border border-amber-800 rounded-lg px-4 py-2 text-sm text-amber-300">
-            ⏳ {myPendingCount} request{myPendingCount === 1 ? '' : 's'} waiting for supervisor approval
+            ⏳ {myPendingCount} day{myPendingCount === 1 ? '' : 's'} waiting for supervisor approval
           </div>
         )}
 
@@ -592,55 +588,53 @@ function ScheduleManager() {
               const dateStr = formatDateISO(day);
               const holiday = isHoliday(day);
               const cell = schedule[viewedId]?.[dateStr] || {};
-              const vacReq = vacationRequests[viewedId]?.[dateStr];
-              const workReq = workRequests[viewedId]?.[dateStr];
+              const req = vacationRequests[viewedId]?.[dateStr];
               const past = day < today;
+              const closed = isSunday(day) || holiday;
 
-              let style = 'bg-zinc-800/60';
-              let label = getStatusLabel(cell.status);
-              let icon = '';
-
-              if (vacReq?.status === 'pending') {
-                style = 'bg-amber-900/20 border-2 border-dashed border-amber-500 text-amber-300';
-                label = 'Off?'; icon = '⏳';
-              } else if (workReq?.status === 'pending') {
-                style = 'bg-cyan-900/20 border-2 border-dashed border-cyan-500 text-cyan-300';
-                label = 'Work?'; icon = '⏳';
-              } else if (cell.status) {
-                style = getStatusColor(cell.status);
-                icon = { work: '💼', vacation: '🏖️', holiday: '🎉', nowork: '🏠', oncall: '📞' }[cell.status] || '';
-                if (cell.status === 'holiday') label = holiday?.name || 'Holiday';
+              let style, label, icon, sub = null;
+              if (isSunday(day)) {
+                style = 'bg-zinc-800/40 text-zinc-500'; label = 'Closed'; icon = '';
+              } else if (holiday) {
+                style = 'bg-blue-900/40 text-blue-300'; label = holiday.name; icon = '🎉';
+              } else if (req && req.status !== 'denied') {
+                const t = TIME_OFF_TYPES[requestType(req)];
+                const pending = req.status === 'pending';
+                style = pending ? `${t.pending} border-2 border-dashed` : t.cell;
+                label = pending ? `${t.label}?` : t.label;
+                icon = pending ? '⏳' : t.icon;
+              } else if (cell.status === 'vacation') {
+                style = TIME_OFF_TYPES.vacation.cell; label = 'Time Off'; icon = '🏖️';
+              } else {
+                style = 'bg-emerald-900/40 text-emerald-300'; label = 'Available'; icon = '✅';
+                if (cell.status === 'work' && cell.location) sub = cell.location;
               }
 
               return (
                 <button
                   key={idx}
-                  onClick={() => !past && setSelectedDate(day)}
-                  disabled={past}
-                  className={`min-h-[64px] md:min-h-[96px] rounded-lg p-1 md:p-2 text-left flex flex-col transition-all ${style} ${past ? 'opacity-40 cursor-default' : 'hover:ring-2 hover:ring-zinc-500'} ${dateStr === todayStr ? 'ring-2 ring-emerald-400' : ''}`}
+                  onClick={() => { if (!past && !closed) { setSelectedDate(day); setRangeEnd(''); } }}
+                  disabled={past || closed}
+                  className={`min-h-[64px] md:min-h-[96px] rounded-lg p-1 md:p-2 text-left flex flex-col transition-all ${style} ${past ? 'opacity-40' : closed ? '' : 'hover:ring-2 hover:ring-zinc-400 cursor-pointer'} ${dateStr === todayStr ? 'ring-2 ring-white' : ''}`}
                 >
                   <div className="flex justify-between items-start w-full">
                     <span className="text-sm md:text-base font-semibold">{day.getDate()}</span>
                     <span className="text-xs md:text-base">{icon}</span>
                   </div>
-                  <span className="text-[9px] md:text-xs mt-auto leading-tight truncate w-full">{label}</span>
-                  {cell.status === 'work' && cell.location && (
-                    <span className="hidden md:block text-[10px] opacity-70 truncate w-full">{cell.location}</span>
-                  )}
+                  <span className="text-[9px] md:text-xs mt-auto leading-tight truncate w-full font-medium">{label}</span>
+                  {sub && <span className="hidden md:block text-[10px] opacity-70 truncate w-full">📍 {sub}</span>}
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-3 text-xs text-zinc-400 bg-zinc-900/30 rounded-lg p-3">
-          <span>💼 Working</span>
-          <span>🏠 Day off</span>
-          <span>🏖️ Time off</span>
-          <span>📞 On call</span>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-zinc-400 bg-zinc-900/30 rounded-lg p-3">
+          <span>✅ Available</span>
+          {Object.values(TIME_OFF_TYPES).map(t => <span key={t.label}>{t.icon} {t.label}</span>)}
+          <span>⏳ Waiting for approval</span>
           <span>🎉 Holiday</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded border-2 border-dashed border-amber-500"></span> Day off pending</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded border-2 border-dashed border-cyan-500"></span> Work request pending</span>
+          <span>📍 Scheduled post</span>
         </div>
 
         {selectedDate && renderDayModal()}
@@ -648,14 +642,32 @@ function ScheduleManager() {
     );
   };
 
+  // Open days (not Sunday or holiday) from start through end, inclusive
+  const openDaysBetween = (startStr, endStr) => {
+    const result = [];
+    for (let d = new Date(startStr + 'T12:00:00'); formatDateISO(d) <= endStr; d.setDate(d.getDate() + 1)) {
+      if (!isSunday(d) && !isHoliday(d)) result.push(formatDateISO(d));
+    }
+    return result;
+  };
+
   const renderDayModal = () => {
     const dateStr = formatDateISO(selectedDate);
     const cell = schedule[viewedId]?.[dateStr] || {};
-    const vacReq = vacationRequests[viewedId]?.[dateStr];
-    const workReq = workRequests[viewedId]?.[dateStr];
-    const holiday = isHoliday(selectedDate);
-    const closed = isSunday(selectedDate) || holiday;
+    const req = vacationRequests[viewedId]?.[dateStr];
+    const current = req && req.status !== 'denied' ? requestType(req) : 'available';
     const close = () => setSelectedDate(null);
+    const dates = rangeEnd && rangeEnd > dateStr ? openDaysBetween(dateStr, rangeEnd) : [dateStr];
+
+    const choose = (choice) => {
+      dates.forEach(d => choice === 'available' ? markAvailable(viewedId, d) : setTimeOff(viewedId, d, choice));
+      close();
+    };
+
+    const options = [
+      { id: 'available', label: 'Available', icon: '✅', button: 'bg-emerald-700 hover:bg-emerald-600' },
+      ...Object.entries(TIME_OFF_TYPES).map(([id, t]) => ({ id, ...t })),
+    ];
 
     return (
       <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-center z-50 p-0 md:p-4" onClick={close}>
@@ -665,121 +677,89 @@ function ScheduleManager() {
             <button onClick={close} className="text-zinc-500 hover:text-zinc-300 text-xl px-2">✕</button>
           </div>
 
-          <div className="bg-zinc-800/50 rounded-lg p-4 mb-4">
-            <p className="text-xs text-zinc-500 mb-1 uppercase tracking-wide">Scheduled</p>
-            {cell.status === 'work' ? (
-              <>
-                <p className="text-emerald-400 font-medium">💼 Working</p>
-                <p className="text-sm text-zinc-300 mt-1">{cell.location}</p>
-                <p className="text-sm text-zinc-400">{cell.time}</p>
-              </>
-            ) : (
-              <p className="font-medium">{getStatusLabel(cell.status)}{holiday ? ` - ${holiday.name}` : ''}</p>
-            )}
-          </div>
-
-          {closed ? (
-            <p className="text-sm text-zinc-500">The office is closed this day, so no requests are needed.</p>
-          ) : (
-            <div className="space-y-3">
-              {vacReq?.status === 'pending' ? (
-                <div className="bg-amber-900/20 border border-amber-800 rounded-lg p-3">
-                  <p className="text-amber-300 text-sm">⏳ Day off requested, waiting for approval</p>
-                  <button onClick={() => { cancelTimeOffRequest(viewedId, dateStr); close(); }} className="mt-2 text-sm text-red-400 hover:text-red-300">Cancel request</button>
-                </div>
-              ) : vacReq?.status === 'approved' ? (
-                <div className="bg-amber-900/20 border border-amber-800 rounded-lg p-3">
-                  <p className="text-amber-300 text-sm">🏖️ Day off approved</p>
-                  {isSupervisor && <button onClick={() => { cancelTimeOffRequest(viewedId, dateStr); close(); }} className="mt-2 text-sm text-red-400 hover:text-red-300">Remove time off</button>}
-                </div>
-              ) : (
-                <>
-                  {vacReq?.status === 'denied' && <p className="text-sm text-red-400">An earlier day off request for this date was denied.</p>}
-                  <button
-                    onClick={() => { requestTimeOff(viewedId, dateStr); close(); }}
-                    className="w-full px-4 py-3 bg-amber-600 hover:bg-amber-500 rounded-lg font-medium"
-                  >
-                    🏖️ Request Day Off
-                  </button>
-                </>
-              )}
-
-              {workReq?.status === 'pending' ? (
-                <div className="bg-cyan-900/20 border border-cyan-800 rounded-lg p-3">
-                  <p className="text-cyan-300 text-sm">⏳ Asked to work at {workReq.location}, waiting for approval</p>
-                  <button onClick={() => { cancelWorkRequest(viewedId, dateStr); close(); }} className="mt-2 text-sm text-red-400 hover:text-red-300">Cancel request</button>
-                </div>
-              ) : workReq?.status === 'approved' ? (
-                <div className="bg-cyan-900/20 border border-cyan-800 rounded-lg p-3">
-                  <p className="text-cyan-300 text-sm">✅ Approved to work at {workReq.location}</p>
-                  {isSupervisor && <button onClick={() => { cancelWorkRequest(viewedId, dateStr); close(); }} className="mt-2 text-sm text-red-400 hover:text-red-300">Remove</button>}
-                </div>
-              ) : cell.status !== 'work' && vacReq?.status !== 'approved' && (
-                <div className="bg-zinc-800/50 rounded-lg p-3">
-                  {workReq?.status === 'denied' && <p className="text-sm text-red-400 mb-2">An earlier work request for this date was denied.</p>}
-                  <p className="text-sm text-zinc-300 mb-2">💼 Request to work at:</p>
-                  <div className="space-y-2">
-                    {locations.filter(loc => !loc.supervisorOnly).map(loc => (
-                      <button
-                        key={loc.name}
-                        onClick={() => { requestWork(viewedId, dateStr, loc.name); close(); }}
-                        className="w-full px-3 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-sm text-left"
-                      >
-                        {loc.name} {loc.armed && <span className="text-xs text-red-200">(armed)</span>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {cell.status === 'work' && current === 'available' && (
+            <div className="bg-zinc-800/50 rounded-lg p-3 mb-4 text-sm">
+              <p className="text-zinc-400">Currently scheduled</p>
+              <p className="font-medium">📍 {cell.location}</p>
+              <p className="text-zinc-400">{cell.time}</p>
             </div>
           )}
+
+          {req?.status === 'pending' && <p className="text-sm text-amber-300 mb-3">⏳ {TIME_OFF_TYPES[current].label} is waiting for supervisor approval.</p>}
+          {req?.status === 'approved' && <p className="text-sm text-emerald-300 mb-3">✔ {TIME_OFF_TYPES[current].label} approved.</p>}
+          {req?.status === 'denied' && <p className="text-sm text-red-400 mb-3">Your {TIME_OFF_TYPES[requestType(req)].label.toLowerCase()} request for this day was denied, so you are marked Available.</p>}
+
+          <p className="text-sm text-zinc-300 mb-2">Set this day to:</p>
+          <div className="grid grid-cols-2 gap-2">
+            {options.map(o => (
+              <button
+                key={o.id}
+                onClick={() => choose(o.id)}
+                className={`px-3 py-4 rounded-lg font-medium text-sm ${o.button} ${current === o.id ? 'ring-2 ring-white' : 'opacity-80'}`}
+              >
+                <div className="text-2xl mb-1">{o.icon}</div>
+                {o.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 bg-zinc-800/50 rounded-lg p-3">
+            <label className="block text-sm text-zinc-300 mb-2">Several days in a row? Apply through:</label>
+            <input
+              type="date"
+              value={rangeEnd}
+              min={dateStr}
+              onChange={(e) => setRangeEnd(e.target.value)}
+              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:outline-none focus:border-emerald-500"
+            />
+            {dates.length > 1 && <p className="text-xs text-zinc-400 mt-2">Your choice will apply to {dates.length} open days (Sundays and holidays skipped).</p>}
+          </div>
+
+          {!isSupervisor && <p className="text-xs text-zinc-500 mt-4">Day Off, Vacation and Sick need supervisor approval.</p>}
         </div>
       </div>
     );
   };
 
-  const renderRequestCard = ({ empId, empName, dateStr, req }, onApprove, onDeny) => (
-    <div key={`${empId}-${dateStr}`} className="bg-zinc-900/50 p-4 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-3">
-      <div>
-        <p className="font-medium">{empName}</p>
-        <p className="text-sm text-zinc-300">{formatLongDate(dateStr)}</p>
-        {req.location && <p className="text-sm text-cyan-400">Location: {req.location}</p>}
-        {req.requestedAt && <p className="text-xs text-zinc-500">Requested {new Date(req.requestedAt).toLocaleString()}</p>}
-      </div>
-      <div className="flex gap-2">
-        <button onClick={() => onApprove(empId, dateStr)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm min-h-[44px]">Approve</button>
-        <button onClick={() => onDeny(empId, dateStr)} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm min-h-[44px]">Deny</button>
-      </div>
-    </div>
-  );
-
   const renderRequests = () => {
-    const pendingTimeOff = pendingList(vacationRequests);
-    const pendingWork = pendingList(workRequests);
+    const pending = pendingList(vacationRequests);
 
-    if (pendingTimeOff.length === 0 && pendingWork.length === 0) {
+    if (pending.length === 0) {
       return (
         <div className="text-center py-16 text-zinc-500">
           <p className="text-lg">✅ No pending requests</p>
-          <p className="text-sm mt-2">New day off and work requests will show up here.</p>
+          <p className="text-sm mt-2">When guards mark a day off, vacation or sick, it shows up here.</p>
         </div>
       );
     }
 
     return (
-      <div className="space-y-6">
-        {pendingTimeOff.length > 0 && (
-          <div className="bg-amber-900/20 border border-amber-800 rounded-xl p-4">
-            <h3 className="font-medium text-amber-300 mb-4 text-lg">🏖️ Day Off Requests ({pendingTimeOff.length})</h3>
-            <div className="space-y-3">{pendingTimeOff.map(r => renderRequestCard(r, approveTimeOff, denyTimeOff))}</div>
-          </div>
-        )}
-        {pendingWork.length > 0 && (
-          <div className="bg-cyan-900/20 border border-cyan-800 rounded-xl p-4">
-            <h3 className="font-medium text-cyan-300 mb-4 text-lg">💼 Work Requests ({pendingWork.length})</h3>
-            <div className="space-y-3">{pendingWork.map(r => renderRequestCard(r, approveWorkRequest, denyWorkRequest))}</div>
-          </div>
-        )}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium text-lg">Time Off Requests ({pending.length})</h3>
+          <button
+            onClick={() => pending.forEach(({ empId, dateStr }) => approveTimeOff(empId, dateStr))}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-sm min-h-[44px]"
+          >
+            Approve all
+          </button>
+        </div>
+        {pending.map(({ empId, empName, dateStr, req }) => {
+          const t = TIME_OFF_TYPES[requestType(req)];
+          return (
+            <div key={`${empId}-${dateStr}`} className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">{empName}</p>
+                <p className="text-sm text-zinc-300">{t.icon} {t.label} · {formatLongDate(dateStr)}</p>
+                {req.requestedAt && <p className="text-xs text-zinc-500">Requested {new Date(req.requestedAt).toLocaleString()}</p>}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => approveTimeOff(empId, dateStr)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm min-h-[44px]">Approve</button>
+                <button onClick={() => denyTimeOff(empId, dateStr)} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm min-h-[44px]">Deny</button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -835,7 +815,7 @@ function ScheduleManager() {
                   return (
                     <td key={dk} className="p-2">
                       <div className={`rounded-lg p-2 text-xs ${getStatusColor(cell.status)} cursor-pointer hover:ring-1 hover:ring-zinc-600`} onClick={() => cycleStatus(emp.id, dk)}>
-                        <div className="font-medium mb-1">{getStatusLabel(cell.status)}</div>
+                        <div className="font-medium mb-1">{cell.timeOffType ? TIME_OFF_TYPES[cell.timeOffType].label : getStatusLabel(cell.status)}</div>
                         {cell.status === 'work' && cell.location && <div className="text-[10px] opacity-70 truncate">{cell.location}</div>}
                         {cell.status === 'work' && <div className="text-[10px] opacity-70">{cell.time}</div>}
                       </div>
@@ -908,8 +888,12 @@ function ScheduleManager() {
 
     const todayStr = formatDateISO(new Date());
     const upcoming = [];
-    Object.entries(vacationRequests[viewedId] || {}).forEach(([d, r]) => { if (d >= todayStr) upcoming.push({ d, type: 'Day off', ...r }); });
-    Object.entries(workRequests[viewedId] || {}).forEach(([d, r]) => { if (d >= todayStr) upcoming.push({ d, type: `Work at ${r.location}`, ...r }); });
+    Object.entries(vacationRequests[viewedId] || {}).forEach(([d, r]) => {
+      if (d >= todayStr) {
+        const t = TIME_OFF_TYPES[requestType(r)];
+        upcoming.push({ ...r, d, type: `${t.icon} ${t.label}` });
+      }
+    });
     upcoming.sort((a, b) => a.d.localeCompare(b.d));
     const statusStyle = { pending: 'text-amber-400', approved: 'text-emerald-400', denied: 'text-red-400' };
     const certFlag = isCertExpiring(emp.guardCardExpiration) || isCertExpiring(emp.cprCardExpiration);
@@ -1069,7 +1053,7 @@ function ScheduleManager() {
     );
   }
 
-  const pendingCount = isSupervisor ? pendingList(vacationRequests).length + pendingList(workRequests).length : 0;
+  const pendingCount = isSupervisor ? pendingList(vacationRequests).length : 0;
 
   const tabs = [
     { id: 'calendar', label: '📅 Calendar' },
